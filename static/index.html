@@ -1,0 +1,112 @@
+<!-- static/index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>TankBot Brain</title>
+  <meta charset="utf-8">
+  <style>
+    body {
+      margin:0;
+      font-family: system-ui;
+      background:#0b1020;
+      color:white;
+      padding:20px;
+    }
+    h1 { margin-bottom: 8px; }
+    /* (your CSS stays exactly the same) */
+  </style>
+</head>
+<body>
+  <h1>TankBot Brain</h1>
+  <div class="subtitle">Raspberry Pi 5 Vision & Control</div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-title">Video Stream (ESP32-CAM)</div>
+      <div id="video-status" class="status-pill offline">
+        <div class="dot"></div>
+        <span>checking…</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">TankBot Controller</div>
+      <div id="tankbot-status" class="status-pill offline">
+        <div class="dot"></div>
+        <span>checking…</span>
+      </div>
+    </div>
+  </div>
+
+<div class="card" style="max-width: 680px; width: 100%; margin-top:16px;">
+� <div class="card-title">Modes</div>
+  <button id="person-start">Start Person Follow</button>
+  <button id="person-stop">Stop Person Follow</button>
+  <div id="person-status" class="small">Mode: idle</div>
+</div>
+
+<script>
+  async function postJson(url) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }
+
+  document.getElementById("person-start").onclick = async () => {
+    try {
+      await postJson("/person_follow/start");
+      document.getElementById("person-status").textContent = "Mode: person-follow (running)";
+    } catch (e) {
+      document.getElementById("person-status").textContent = "Mode: error starting (" + e.message + ")";
+    }
+  };
+
+  document.getElementById("person-stop").onclick = async () => {
+    try {
+      await postJson("/person_follow/stop");
+      document.getElementById("person-status").textContent = "Mode: idle";
+    } catch (e) {
+      document.getElementById("person-status").textContent = "Mode: error stopping (" + e.message + ")";
+    }
+  };
+</script>
+
+
+  <div class="card" style="max-width:680px; width:100%;">
+    <div class="card-title">Live YOLO View</div>
+    <div class="video-container">
+      <img src="/video">
+    </div>
+    <div class="small">If this is blank, check ESP32-CAM.</div>
+  </div>
+
+  <script>
+    async function refreshStatus() {
+      try {
+        const res = await fetch("/status", {cache:"no-store"});
+        const data = await res.json();
+        setStatus("video-status", data.video_stream === "online");
+        setStatus("tankbot-status", data.tankbot === "online");
+      } catch (e) {
+        setStatus("video-status", false);
+        setStatus("tankbot-status", false);
+      }
+    }
+
+    function setStatus(id, online) {
+      const el = document.getElementById(id);
+      const span = el.querySelector("span");
+      el.classList.remove("online", "offline");
+      el.classList.add(online ? "online" : "offline");
+      span.textContent = online ? "online" : "offline";
+    }
+
+    refreshStatus();
+    setInterval(refreshStatus, 2000);
+  </script>
+</body>
+</html>
