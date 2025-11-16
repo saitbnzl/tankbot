@@ -74,25 +74,31 @@ async def person_follow_loop(video_url: str, ws_url: str, model: YOLO, stop_even
 
                 # ------------------ PERSON YOK ------------------
                 if target is None:
-                    # FOLLOW kaybetti → SCAN
+                    # FOLLOW → SCAN
                     if state == "FOLLOW":
                         state = "SCAN"
+                        no_person_frames = 0  # <---- önemli
 
-                    # IDLE → SCAN (sen istiyorsun)
-                    if state == "IDLE":
+                    # IDLE → SCAN (ilk geçiş)
+                    elif state == "IDLE":
                         state = "SCAN"
+                        no_person_frames = 0  # <---- yine önemli
 
-                    no_person_frames += 1
+                    else:
+                        # SCAN modunda zaten kişiyi arıyoruz
+                        no_person_frames += 1
 
+                    # Çok uzun süre kişi yok → IDLE
                     if no_person_frames > LOST_FRAMES_LIMIT:
                         print("[FOLLOW] Person lost too long. Going IDLE.")
                         await ws.send("stop,0")
                         last_cmd = ("stop", 0)
                         state = "IDLE"
+                        no_person_frames = 0               # <---- MUTLAKA RESET!
                         await asyncio.sleep(0.05)
                         continue
 
-                    # SCAN modunda sağa dön
+                    # SCAN modunda dön
                     if state == "SCAN" and last_cmd != ("right", TURN_SPEED):
                         print("[FOLLOW][SCAN] Turning right to search")
                         await ws.send(f"right,{TURN_SPEED}")
