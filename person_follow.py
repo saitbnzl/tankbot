@@ -9,10 +9,10 @@ CENTER_DEADZONE = 0.15   # ±15% of width
 TURN_SPEED = 60
 FORWARD_SPEED = 70
 LOST_FRAMES_LIMIT = 30   # kaç frame kişi yoksa dur
-ROTATE_90_CCW = True     # sen zaten grab_frame içinde de döndürebilirsin
-
+ROTATE_90_CCW = True     # istersen grab_frame içinde de döndürebilirsin
 
 state = "IDLE"
+
 
 def pick_main_person(results):
     boxes = results.boxes
@@ -47,6 +47,8 @@ async def person_follow_loop(video_url: str, ws_url: str, model: YOLO, stop_even
     - model: global YOLO model (tankbot_brain_server.py'den verilecek)
     - stop_event: /person_follow/stop çağrılınca set edilecek
     """
+    global state
+
     print("[FOLLOW] Starting person follow loop")
     cap = cv2.VideoCapture(video_url)
     if not cap.isOpened():
@@ -69,9 +71,12 @@ async def person_follow_loop(video_url: str, ws_url: str, model: YOLO, stop_even
                 results = model(frame, imgsz=320, verbose=False)[0]
 
                 target = pick_main_person(results)
+
+                # ------------------ PERSON YOK ------------------
                 if target is None:
-		            if state == "FOLLOW":
-		    	        state = "SCAN"
+                    if state == "FOLLOW":
+                        state = "SCAN"
+
                     no_person_frames += 1
 
                     if no_person_frames > LOST_FRAMES_LIMIT:
@@ -82,40 +87,41 @@ async def person_follow_loop(video_url: str, ws_url: str, model: YOLO, stop_even
                         state = "IDLE"
 
                     # Kişi yoksa yavaşça sağa dön
-                    if state != "IDLE" && last_cmd != ("right", TURN_SPEED):
+                    if state != "IDLE" and last_cmd != ("right", TURN_SPEED):
                         print("[FOLLOW][SEARCH] No person, turning right")
                         await ws.send(f"right,{TURN_SPEED}")
                         last_cmd = ("right", TURN_SPEED)
 
                     await asyncio.sleep(0.05)
                     continue
-		        else:
-		            if state == "IDLE" or state == "SCAN":
-                        state = "FOLLOW"
-                        # Person var
-                    no_person_frames = 0
-                    cx, cy, w, h, conf = target
-                    mid_x = W / 2.0
-                    err_x = (cx - mid_x) / mid_x  # -1..+1
 
-                    if abs(err_x) < CENTER_DEADZONE:
-                        cmd = ("forward", FORWARD_SPEED)
-                        state_str = "FORWARD"
+                # ------------------ PERSON VAR ------------------
+                if state in ("IDLE", "SCAN"):
+                    state = "FOLLOW"
+
+                no_person_frames = 0
+                cx, cy, w, h, conf = target
+                mid_x = W / 2.0
+                err_x = (cx - mid_x) / mid_x  # -1..+1
+
+                if abs(err_x) < CENTER_DEADZONE:
+                    cmd = ("forward", FORWARD_SPEED)
+                    state_str = "FORWARD"
+                else:
+                    if err_x < 0:
+                        cmd = ("left", TURN_SPEED)
+                        state_str = "TURN LEFT"
                     else:
-                        if err_x < 0:
-                            cmd = ("left", TURN_SPEED)
-                            state_str = "TURN LEFT"
-                        else:
-                            cmd = ("right", TURN_SPEED)
-                            state_str = "TURN RIGHT"
+                        cmd = ("right", TURN_SPEED)
+                        state_str = "TURN RIGHT"
 
-                    if cmd != last_cmd:
-                        print(
-                            f"[FOLLOW][TRACK] {state_str} | err_x={err_x:.2f} "
-                            f"cx={cx:.0f}/{W} area={w*h:.0f} conf={conf:.2f}"
-                        )
-                        await ws.send(f"{cmd[0]},{cmd[1]}")
-                        last_cmd = cmd
+                if cmd != last_cmd:
+                    print(
+                        f"[FOLLOW][TRACK] {state_str} | err_x={err_x:.2f} "
+                        f"cx={cx:.0f}/{W} area={w*h:.0f} conf={conf:.2f}"
+                    )
+                    await ws.send(f"{cmd[0]},{cmd[1]}")
+                    last_cmd = cmd
 
                 await asyncio.sleep(0.05)
 
