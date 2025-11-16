@@ -42,11 +42,6 @@ def pick_main_person(results):
 
 
 async def person_follow_loop(video_url: str, ws_url: str, model: YOLO, stop_event: asyncio.Event):
-    """
-    Basit person-follow loop’u.
-    - model: global YOLO model (tankbot_brain_server.py'den verilecek)
-    - stop_event: /person_follow/stop çağrılınca set edilecek
-    """
     global state
 
     print("[FOLLOW] Starting person follow loop")
@@ -60,6 +55,9 @@ async def person_follow_loop(video_url: str, ws_url: str, model: YOLO, stop_even
             last_cmd = None
             no_person_frames = 0
 
+            # Takip modu açılınca önce SCAN modunda başla
+            state = "SCAN"
+
             while not stop_event.is_set():
                 ok, frame = cap.read()
                 if not ok or frame is None:
@@ -72,46 +70,52 @@ async def person_follow_loop(video_url: str, ws_url: str, model: YOLO, stop_even
 
                 target = pick_main_person(results)
 
-                # ------------------ PERSON YOK ------------------
+                # ===================== PERSON YOK =====================
                 if target is None:
-                    # FOLLOW → SCAN
+                    # FOLLOW ederken kaybettik → SCAN'a dön
                     if state == "FOLLOW":
                         state = "SCAN"
-                        no_person_frames = 0  # <---- önemli
+                        no_person_frames = 0
 
-                    # IDLE → SCAN (ilk geçiş)
-                    elif state == "IDLE":
-                        state = "SCAN"
-                        no_person_frames = 0  # <---- yine önemli
-
-                    else:
-                        # SCAN modunda zaten kişiyi arıyoruz
+                    if state == "SCAN":
                         no_person_frames += 1
 
-                    # Çok uzun süre kişi yok → IDLE
-                    if no_person_frames > LOST_FRAMES_LIMIT:
-                        print("[FOLLOW] Person lost too long. Going IDLE.")
-                        await ws.send("stop,0")
-                        last_cmd = ("stop", 0)
-                        state = "IDLE"
-                        no_person_frames = 0               # <---- MUTLAKA RESET!
-                        await asyncio.sleep(0.05)
-                        continue
+                        # Çok uzun süre kişi yok → IDLE'a geç ve dur
+                        if no_person_frames > LOST_FRAMES_LIMIT:
+                            if last_cmd != ("stop", 0):
+                                print("[FOLLOW] Person lost too long. Going IDLE.")
+                                await ws.send("stop,0")
+                                last_cmd = ("stop", 0)
+                            state = "IDLE"
+                            no_person_frames = 0
+                            await asyncio.sleep(0.05)
+                            continue
 
-                    # SCAN modunda dön
-                    if state == "SCAN" and last_cmd != ("right", TURN_SPEED):
-                        print("[FOLLOW][SCAN] Turning right to search")
-                        await ws.send(f"right,{TURN_SPEED}")
-                        last_cmd = ("right", TURN_SPEED)
+                        # SCAN modunda sağa dönerek ara
+                        if last_cmd != ("right", TURN_SPEED):
+                            print("[FOLLOW][SCAN] Turning right to search")
+                            await ws.send(f"right,{TURN_SPEED}")
+                            last_cmd = ("right", TURN_SPEED)
+
+                    elif state == "IDLE":
+                        # IDLE'da hiçbir yere hareket etme, sadece bekle
+                        if last_cmd != ("stop", 0):
+                            print("[FOLLOW][IDLE] Standing by.")
+                            await ws.send("stop,0")
+                            last_cmd = ("stop", 0)
+                        # no_person_frames burada artmıyor, IDLE'dayken zaman saymıyoruz
 
                     await asyncio.sleep(0.05)
                     continue
 
-                # ------------------ PERSON VAR ------------------
+                # ===================== PERSON VAR =====================
+                # IDLE veya SCAN'den FOLLOW'a geç
                 if state in ("IDLE", "SCAN"):
                     state = "FOLLOW"
+                    print(f"[FOLLOW] Person detected, switching to FOLLOW (prev state: {state})")
 
                 no_person_frames = 0
+
                 cx, cy, w, h, conf = target
                 mid_x = W / 2.0
                 err_x = (cx - mid_x) / mid_x  # -1..+1
