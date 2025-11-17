@@ -1,17 +1,17 @@
 # person_follow.py
+
 import asyncio
 import cv2
-from ultralytics import YOLO
 import websockets
+from ultralytics import YOLO
 
 CONF_THRESHOLD = 0.33
-CENTER_DEADZONE = 0.15   # ±15% of width
+CENTER_DEADZONE = 0.15
 TURN_SPEED = 60
 FORWARD_SPEED = 70
-LOST_FRAMES_LIMIT = 30   # kaç frame kişi yoksa dur
-ROTATE_90_CCW = True     # istersen grab_frame içinde de döndürebilirsin
+LOST_FRAMES_LIMIT = 30
 
-state = "IDLE"
+state = "SCAN"   # start in SCAN mode
 
 
 def pick_main_person(results):
@@ -20,130 +20,112 @@ def pick_main_person(results):
         return None
 
     best = None
-    best_area = 0.0
-
-    for box, cls_id, conf in zip(boxes.xyxy, boxes.cls, boxes.conf):
-        if int(cls_id) != 0:  # COCO: 0 = person
+    best_area = 0
+    for box, cid, conf in zip(boxes.xyxy, boxes.cls, boxes.conf):
+        if int(cid) != 0:
             continue
         if float(conf) < CONF_THRESHOLD:
             continue
 
         x1, y1, x2, y2 = [float(v) for v in box]
-        w = x2 - x1
-        h = y2 - y1
+        w, h = x2 - x1, y2 - y1
         area = w * h
         if area > best_area:
-            cx = x1 + w / 2.0
-            cy = y1 + h / 2.0
             best_area = area
+            cx, cy = x1 + w / 2, y1 + h / 2
             best = (cx, cy, w, h, float(conf))
 
     return best
 
 
-async def person_follow_loop(video_url: str, ws_url: str, model: YOLO, stop_event: asyncio.Event):
+async def person_follow_loop(cap, ws_url: str, model: YOLO, stop_event: asyncio.Event):
     global state
 
     print("[FOLLOW] Starting person follow loop")
-    cap = cv2.VideoCapture(video_url)
-    if not cap.isOpened():
-        print("[FOLLOW][ERROR] Cannot open video stream")
-        return
+    last_cmd = None
+    no_person = 0
 
     try:
         async with websockets.connect(ws_url) as ws:
-            last_cmd = None
-            no_person_frames = 0
-
-            # Takip modu açılınca önce SCAN modunda başla
-            state = "SCAN"
 
             while not stop_event.is_set():
+
                 ok, frame = cap.read()
                 if not ok or frame is None:
-                    print("[FOLLOW] Failed to read frame")
                     await asyncio.sleep(0.05)
                     continue
 
                 H, W = frame.shape[:2]
-                results = model(frame, imgsz=320, verbose=False)[0]
 
+                results = model(frame, imgsz=320, verbose=False)[0]
                 target = pick_main_person(results)
 
-                # ===================== PERSON YOK =====================
+                # ---------------------------------------------------------
+                # PERSON YOK
+                # ---------------------------------------------------------
                 if target is None:
-                    # FOLLOW ederken kaybettik → SCAN'a dön
+
+                    # FOLLOW → SCAN
                     if state == "FOLLOW":
+                        print("[FOLLOW] Lost person → SCAN")
                         state = "SCAN"
-                        no_person_frames = 0
+                        no_person = 0
 
-                    if state == "SCAN":
-                        no_person_frames += 1
+                    # SCAN mode
+                    elif state == "SCAN":
+                        no_person += 1
 
-                        # Çok uzun süre kişi yok → IDLE'a geç ve dur
-                        if no_person_frames > LOST_FRAMES_LIMIT:
-                            if last_cmd != ("stop", 0):
-                                print("[FOLLOW] Person lost too long. Going IDLE.")
-                                await ws.send("stop,0")
-                                last_cmd = ("stop", 0)
+                        if no_person > LOST_FRAMES_LIMIT:
+                            print("[FOLLOW] Person lost too long → IDLE")
+                            await ws.send("stop,0")
+                            last_cmd = ("stop", 0)
                             state = "IDLE"
-                            no_person_frames = 0
+                            no_person = 0
                             await asyncio.sleep(0.05)
                             continue
 
-                        # SCAN modunda sağa dönerek ara
                         if last_cmd != ("right", TURN_SPEED):
                             print("[FOLLOW][SCAN] Turning right to search")
                             await ws.send(f"right,{TURN_SPEED}")
                             last_cmd = ("right", TURN_SPEED)
 
+                    # IDLE mode
                     elif state == "IDLE":
-                        # IDLE'da hiçbir yere hareket etme, sadece bekle
                         if last_cmd != ("stop", 0):
-                            print("[FOLLOW][IDLE] Standing by.")
+                            print("[FOLLOW][IDLE] Standing by...")
                             await ws.send("stop,0")
                             last_cmd = ("stop", 0)
-                        # no_person_frames burada artmıyor, IDLE'dayken zaman saymıyoruz
 
                     await asyncio.sleep(0.05)
                     continue
 
-                # ===================== PERSON VAR =====================
-                # IDLE veya SCAN'den FOLLOW'a geç
+                # ---------------------------------------------------------
+                # PERSON VAR
+                # ---------------------------------------------------------
                 if state in ("IDLE", "SCAN"):
+                    print(f"[FOLLOW] Person detected → FOLLOW (from {state})")
                     state = "FOLLOW"
-                    print(f"[FOLLOW] Person detected, switching to FOLLOW (prev state: {state})")
 
-                no_person_frames = 0
+                no_person = 0
 
                 cx, cy, w, h, conf = target
-                mid_x = W / 2.0
-                err_x = (cx - mid_x) / mid_x  # -1..+1
+                mid = W / 2
+                err = (cx - mid) / mid
 
-                if abs(err_x) < CENTER_DEADZONE:
+                # Choose movement
+                if abs(err) < CENTER_DEADZONE:
                     cmd = ("forward", FORWARD_SPEED)
-                    state_str = "FORWARD"
                 else:
-                    if err_x < 0:
-                        cmd = ("left", TURN_SPEED)
-                        state_str = "TURN LEFT"
-                    else:
-                        cmd = ("right", TURN_SPEED)
-                        state_str = "TURN RIGHT"
+                    cmd = ("left", TURN_SPEED) if err < 0 else ("right", TURN_SPEED)
 
                 if cmd != last_cmd:
-                    print(
-                        f"[FOLLOW][TRACK] {state_str} | err_x={err_x:.2f} "
-                        f"cx={cx:.0f}/{W} area={w*h:.0f} conf={conf:.2f}"
-                    )
+                    print(f"[FOLLOW][TRACK] {cmd[0]} err={err:.2f} conf={conf:.2f}")
                     await ws.send(f"{cmd[0]},{cmd[1]}")
                     last_cmd = cmd
 
                 await asyncio.sleep(0.05)
 
-            # güvenlik
-            print("[FOLLOW] Loop ended, sending final stop")
-            await ws.send("stop,0")
+        # connection auto-closed here
 
     except Exception as e:
         print(f"[FOLLOW][ERROR] {e}")
