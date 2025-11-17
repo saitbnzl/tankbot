@@ -1,6 +1,6 @@
 # tankbot_brain_server.py
 
-from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -9,33 +9,20 @@ import requests
 import asyncio
 import websockets
 import cv2
+import threading
+import time
 
 from person_follow import person_follow_loop
 
-# ============================================================
-#               GLOBAL CAMERA (NO FREEZE!)
-# ============================================================
-
-VIDEO_URL = "http://192.168.1.50:81/stream"  # ESP32-CAM MJPEG
-WS_URL    = "ws://tankbot.local:81"          # Motor controller
-
-print("[INIT] Opening global VideoCapture...")
-cap = cv2.VideoCapture(VIDEO_URL)
-
-if not cap.isOpened():
-    raise RuntimeError("Cannot open ESP32-CAM stream")
-
 
 # ============================================================
-#                  GLOBAL YOLO MODEL
+#               GLOBAL SETTINGS
 # ============================================================
 
-model = YOLO("yolov8n.pt")  # fast lightweight model
+VIDEO_URL = "http://192.168.1.50:81/stream"  # ESP32-CAM stream
+WS_URL    = "ws://tankbot.local:81"          # tankbot motor controller
 
-
-# ============================================================
-#                  FASTAPI INITIALIZATION
-# ============================================================
+model = YOLO("yolov8n.pt")
 
 app = FastAPI()
 
@@ -44,106 +31,94 @@ person_follow_stop_event: asyncio.Event | None = None
 
 
 # ============================================================
+#                 GLOBAL FRAME BUFFER
+# ============================================================
+
+latest_frame = None
+frame_lock = threading.Lock()
+
+def frame_grabber():
+    """
+    Runs forever in a dedicated thread.
+    Reads frames from ESP32-CAM using a SINGLE VideoCapture.
+    Stores the *latest* frame in global latest_frame.
+    """
+    global latest_frame
+
+    print("[FRAME] Starting frame grabber thread...")
+    cap = cv2.VideoCapture(VIDEO_URL)
+
+    if not cap.isOpened():
+        raise RuntimeError("Cannot open ESP32-CAM stream")
+
+    while True:
+        ok, frame = cap.read()
+        if ok and frame is not None:
+            # Rotate camera (ESP32-CAM is sideways)
+            frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+            with frame_lock:
+                latest_frame = frame
+
+        # small sleep avoids hogging CPU
+        time.sleep(0.001)
+
+
+# Start frame grabber thread on startup
+threading.Thread(target=frame_grabber, daemon=True).start()
+
+
+# ============================================================
+#                UTILITY FUNCTIONS
+# ============================================================
+
+def get_latest_frame():
+    global latest_frame
+    with frame_lock:
+        if latest_frame is None:
+            raise RuntimeError("No frame received yet")
+        return latest_frame.copy()
+
+
+def annotate_frame(frame):
+    results = model(frame, imgsz=320, verbose=False)
+    return results[0].plot()
+
+
+# ============================================================
 #                     DATA MODELS
 # ============================================================
 
 class DriveRequest(BaseModel):
-    cmd: str    # forward/backward/left/right/stop
+    cmd: str
     speed: int = 70
 
 
 # ============================================================
-#               CAMERA FRAME GRABBING (GLOBAL CAP)
-# ============================================================
-
-def grab_frame():
-    """
-    Reads ONE frame from the global VideoCapture.
-    No new VideoCapture is created.
-    """
-    ok, frame = cap.read()
-    if not ok or frame is None:
-        raise RuntimeError("Failed to read frame from ESP32-CAM")
-
-    # rotate sideways camera
-    frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-    return frame
-
-
-# ============================================================
-#                 YOLO ANNOTATION FOR /video
-# ============================================================
-
-def annotate_frame(frame):
-    results = model(frame, imgsz=320, verbose=False)
-    annotated = results[0].plot()
-    return annotated
-
-
-# ============================================================
-#                   MJPEG STREAM GENERATOR
-# ============================================================
-
-def mjpeg_generator():
-    while True:
-        try:
-            frame = grab_frame()
-            annotated = annotate_frame(frame)
-        except:
-            continue
-
-        ok, jpg = cv2.imencode(".jpg", annotated)
-        if not ok:
-            continue
-
-        yield (
-            b"--frame\r\n"
-            b"Content-Type: image/jpeg\r\n\r\n" +
-            jpg.tobytes() +
-            b"\r\n"
-        )
-
-
-# ============================================================
-#                   HELPER: SEND WS COMMAND
-# ============================================================
-
-async def send_ws_command(cmd: str, speed: int):
-    async with websockets.connect(WS_URL) as ws:
-        await ws.send(f"{cmd},{speed}")
-
-
-# ============================================================
-#                        ROUTES
+#                     ROUTES
 # ============================================================
 
 @app.get("/detect")
 def detect():
-    """
-    Read one frame → run YOLO → return detections
-    """
     try:
-        frame = grab_frame()
+        frame = get_latest_frame()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
     results = model(frame, imgsz=320, verbose=False)[0]
-    detections = []
 
+    detections = []
     if results.boxes is not None:
-        for box, cls_id, conf in zip(results.boxes.xyxy, results.boxes.cls, results.boxes.conf):
+        for box, cid, conf in zip(results.boxes.xyxy, results.boxes.cls, results.boxes.conf):
             x1, y1, x2, y2 = [float(v) for v in box]
             detections.append({
-                "class_id": int(cls_id),
-                "class_name": model.names[int(cls_id)],
+                "class_id": int(cid),
+                "class_name": model.names[int(cid)],
                 "confidence": float(conf),
-                "bbox": [x1, y1, x2, y2],
+                "bbox": [x1, y1, x2, y2]
             })
 
-    return {
-        "count": len(detections),
-        "detections": detections,
-    }
+    return {"count": len(detections), "detections": detections}
 
 
 @app.post("/drive")
@@ -152,10 +127,9 @@ async def drive(req: DriveRequest):
     if cmd not in ("forward", "backward", "left", "right", "stop", "f", "b", "l", "r", "s"):
         raise HTTPException(status_code=400, detail="Invalid cmd")
 
-    speed = max(0, min(100, req.speed))
-
     try:
-        await send_ws_command(cmd, speed)
+        async with websockets.connect(WS_URL) as ws:
+            await ws.send(f"{cmd},{req.speed}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"WS error: {e}")
 
@@ -164,8 +138,27 @@ async def drive(req: DriveRequest):
 
 @app.get("/video")
 def video():
+    def generator():
+        while True:
+            try:
+                frame = get_latest_frame()
+                annotated = annotate_frame(frame)
+            except:
+                continue
+
+            ok, jpg = cv2.imencode(".jpg", annotated)
+            if not ok:
+                continue
+
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" +
+                jpg.tobytes() +
+                b"\r\n"
+            )
+
     return StreamingResponse(
-        mjpeg_generator(),
+        generator(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
 
@@ -173,7 +166,7 @@ def video():
 @app.get("/status")
 def status():
     return {
-        "video_stream": "online" if cap.isOpened() else "offline"
+        "latest_frame": "ok" if latest_frame is not None else "none",
     }
 
 
@@ -181,14 +174,14 @@ def status():
 async def person_follow_start():
     global person_follow_task, person_follow_stop_event
 
-    if person_follow_task is not None and not person_follow_task.done():
+    if person_follow_task and not person_follow_task.done():
         raise HTTPException(status_code=400, detail="Already running")
 
     person_follow_stop_event = asyncio.Event()
 
     loop = asyncio.get_running_loop()
     person_follow_task = loop.create_task(
-        person_follow_loop(cap, WS_URL, model, person_follow_stop_event)
+        person_follow_loop(get_latest_frame, WS_URL, model, person_follow_stop_event)
     )
 
     return {"status": "started"}
@@ -202,7 +195,8 @@ async def person_follow_stop():
         person_follow_stop_event.set()
 
     try:
-        await send_ws_command("stop", 0)
+        async with websockets.connect(WS_URL) as ws:
+            await ws.send("stop,0")
     except:
         pass
 
@@ -214,6 +208,6 @@ async def person_follow_stop():
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-@app.get("/", response_class=FileResponse)
+@app.get("/")
 def home():
     return FileResponse("static/index.html")

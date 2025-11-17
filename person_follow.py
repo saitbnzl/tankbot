@@ -1,9 +1,9 @@
 # person_follow.py
 
 import asyncio
-import cv2
 import websockets
 from ultralytics import YOLO
+import cv2
 
 CONF_THRESHOLD = 0.33
 CENTER_DEADZONE = 0.15
@@ -11,12 +11,12 @@ TURN_SPEED = 60
 FORWARD_SPEED = 70
 LOST_FRAMES_LIMIT = 30
 
-state = "SCAN"   # start in SCAN mode
+state = "SCAN"  # Start by searching
 
 
 def pick_main_person(results):
     boxes = results.boxes
-    if boxes is None or len(boxes) == 0:
+    if not boxes:
         return None
 
     best = None
@@ -27,21 +27,21 @@ def pick_main_person(results):
         if float(conf) < CONF_THRESHOLD:
             continue
 
-        x1, y1, x2, y2 = [float(v) for v in box]
+        x1, y1, x2, y2 = map(float, box)
         w, h = x2 - x1, y2 - y1
         area = w * h
         if area > best_area:
             best_area = area
-            cx, cy = x1 + w / 2, y1 + h / 2
+            cx, cy = x1 + w/2, y1 + h/2
             best = (cx, cy, w, h, float(conf))
 
     return best
 
 
-async def person_follow_loop(cap, ws_url: str, model: YOLO, stop_event: asyncio.Event):
+async def person_follow_loop(get_frame_callback, ws_url, model: YOLO, stop_event):
     global state
 
-    print("[FOLLOW] Starting person follow loop")
+    print("[FOLLOW] Starting person follow...")
     last_cmd = None
     no_person = 0
 
@@ -50,28 +50,22 @@ async def person_follow_loop(cap, ws_url: str, model: YOLO, stop_event: asyncio.
 
             while not stop_event.is_set():
 
-                ok, frame = cap.read()
-                if not ok or frame is None:
-                    await asyncio.sleep(0.05)
-                    continue
-
+                frame = get_frame_callback()
                 H, W = frame.shape[:2]
 
                 results = model(frame, imgsz=320, verbose=False)[0]
                 target = pick_main_person(results)
 
-                # ---------------------------------------------------------
-                # PERSON YOK
-                # ---------------------------------------------------------
+                # -----------------------------------------------
+                # NO PERSON
+                # -----------------------------------------------
                 if target is None:
 
-                    # FOLLOW → SCAN
                     if state == "FOLLOW":
                         print("[FOLLOW] Lost person → SCAN")
                         state = "SCAN"
                         no_person = 0
 
-                    # SCAN mode
                     elif state == "SCAN":
                         no_person += 1
 
@@ -89,7 +83,6 @@ async def person_follow_loop(cap, ws_url: str, model: YOLO, stop_event: asyncio.
                             await ws.send(f"right,{TURN_SPEED}")
                             last_cmd = ("right", TURN_SPEED)
 
-                    # IDLE mode
                     elif state == "IDLE":
                         if last_cmd != ("stop", 0):
                             print("[FOLLOW][IDLE] Standing by...")
@@ -99,9 +92,9 @@ async def person_follow_loop(cap, ws_url: str, model: YOLO, stop_event: asyncio.
                     await asyncio.sleep(0.05)
                     continue
 
-                # ---------------------------------------------------------
-                # PERSON VAR
-                # ---------------------------------------------------------
+                # -----------------------------------------------
+                # PERSON FOUND
+                # -----------------------------------------------
                 if state in ("IDLE", "SCAN"):
                     print(f"[FOLLOW] Person detected → FOLLOW (from {state})")
                     state = "FOLLOW"
@@ -112,7 +105,6 @@ async def person_follow_loop(cap, ws_url: str, model: YOLO, stop_event: asyncio.
                 mid = W / 2
                 err = (cx - mid) / mid
 
-                # Choose movement
                 if abs(err) < CENTER_DEADZONE:
                     cmd = ("forward", FORWARD_SPEED)
                 else:
@@ -124,8 +116,6 @@ async def person_follow_loop(cap, ws_url: str, model: YOLO, stop_event: asyncio.
                     last_cmd = cmd
 
                 await asyncio.sleep(0.05)
-
-        # connection auto-closed here
 
     except Exception as e:
         print(f"[FOLLOW][ERROR] {e}")
