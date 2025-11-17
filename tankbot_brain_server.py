@@ -5,7 +5,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from ultralytics import YOLO
-import requests
 import asyncio
 import websockets
 import cv2
@@ -18,8 +17,8 @@ from person_follow import person_follow_loop
 #               GLOBAL SETTINGS
 # ============================================================
 
-VIDEO_URL = "http://192.168.1.50:81/stream"   # ESP32-CAM stream
-WS_URL    = "ws://tankbot.local:81"           # tankbot motor controller
+VIDEO_URL = "http://192.168.1.50:81/stream"
+WS_URL    = "ws://tankbot.local:81"
 
 model = YOLO("yolov8n.pt")
 app = FastAPI()
@@ -27,24 +26,22 @@ app = FastAPI()
 person_follow_task: asyncio.Task | None = None
 person_follow_stop_event: asyncio.Event | None = None
 
-# NEW: last command globally shared with UI
+# last command for UI
 last_sent_command = {"cmd": "stop", "speed": 0}
 
 
 # ============================================================
-#                 FRAME GRABBER THREAD
+#             GLOBAL FRAME GRABBER (single stream)
 # ============================================================
 
 latest_frame = None
 frame_lock = threading.Lock()
 
-
 def frame_grabber():
     global latest_frame
-
-    print("[FRAME] Starting frame grabber thread...")
+    print("[FRAME] Starting frame grabber...")
+    
     cap = cv2.VideoCapture(VIDEO_URL)
-
     if not cap.isOpened():
         raise RuntimeError("Cannot open ESP32-CAM stream")
 
@@ -56,18 +53,13 @@ def frame_grabber():
                 latest_frame = frame
         time.sleep(0.001)
 
-
 threading.Thread(target=frame_grabber, daemon=True).start()
 
-
-# ============================================================
-#                UTILITY FUNCTIONS
-# ============================================================
 
 def get_latest_frame():
     with frame_lock:
         if latest_frame is None:
-            raise RuntimeError("No frame received yet")
+            raise RuntimeError("No frame yet")
         return latest_frame.copy()
 
 
@@ -76,9 +68,14 @@ def annotate_frame(frame):
     return results[0].plot()
 
 
-async def send_ws_command(cmd: str, speed: int):
+# ============================================================
+#         SHARED MOTOR CONTROL FUNCTION (IMPORTANT)
+# ============================================================
+
+async def send_motor_command(cmd: str, speed: int):
     """
-    Sends a command to ESP32 and updates last_sent_command.
+    Unified motor sender for both /drive and person-follow mode.
+    Ensures last_sent_command is ALWAYS updated.
     """
     global last_sent_command
 
@@ -103,17 +100,13 @@ class DriveRequest(BaseModel):
 
 @app.get("/detect")
 def detect():
-    try:
-        frame = get_latest_frame()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+    frame = get_latest_frame()
     results = model(frame, imgsz=320, verbose=False)[0]
 
     detections = []
     if results.boxes is not None:
         for box, cid, conf in zip(results.boxes.xyxy, results.boxes.cls, results.boxes.conf):
-            x1, y1, x2, y2 = [float(v) for v in box]
+            x1, y1, x2, y2 = map(float, box)
             detections.append({
                 "class_id": int(cid),
                 "class_name": model.names[int(cid)],
@@ -127,39 +120,33 @@ def detect():
 @app.post("/drive")
 async def drive(req: DriveRequest):
     cmd = req.cmd.lower()
-    if cmd not in ("forward", "backward", "left", "right", "stop", "s", "f", "b", "l", "r"):
-        raise HTTPException(status_code=400, detail="Invalid cmd")
 
-    # Normalize
-    if cmd == "s": cmd = "stop"
+    # normalize
+    if cmd in ("s", "stp"): cmd = "stop"
     if cmd == "f": cmd = "forward"
     if cmd == "b": cmd = "backward"
     if cmd == "l": cmd = "left"
     if cmd == "r": cmd = "right"
 
+    if cmd not in ("forward", "backward", "left", "right", "stop"):
+        raise HTTPException(status_code=400, detail="Invalid cmd")
+
     try:
-        await send_ws_command(cmd, req.speed)
+        await send_motor_command(cmd, req.speed)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"WS error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
     return {"status": "ok"}
 
-
-# ============================================================
-#                  LIVE YOLO MJPEG STREAM
-# ============================================================
 
 @app.get("/video")
 def video():
     def generator():
         while True:
-            try:
-                frame = get_latest_frame()
-                annotated = annotate_frame(frame)
-                ok, jpg = cv2.imencode(".jpg", annotated)
-                if not ok:
-                    continue
-            except:
+            frame = get_latest_frame()
+            annotated = annotate_frame(frame)
+            ok, jpg = cv2.imencode(".jpg", annotated)
+            if not ok:
                 continue
 
             yield (
@@ -175,34 +162,26 @@ def video():
     )
 
 
-# ============================================================
-#                     STATUS ENDPOINT
-# ============================================================
-
 @app.get("/status")
 def status():
     return {
-        "latest_frame": "ok" if latest_frame is not None else "none",
-        "last_command": last_sent_command
+        "last_command": last_sent_command,
+        "latest_frame": "ok" if latest_frame is not None else "none"
     }
 
-
-# ============================================================
-#               PERSON FOLLOW CONTROL ROUTES
-# ============================================================
 
 @app.post("/person_follow/start")
 async def person_follow_start():
     global person_follow_task, person_follow_stop_event
 
     if person_follow_task and not person_follow_task.done():
-        raise HTTPException(status_code=400, detail="Already running")
+        raise HTTPException(400, "Already running")
 
     person_follow_stop_event = asyncio.Event()
 
     loop = asyncio.get_running_loop()
     person_follow_task = loop.create_task(
-        person_follow_loop(get_latest_frame, WS_URL, model, person_follow_stop_event)
+        person_follow_loop(get_latest_frame, send_motor_command, model, person_follow_stop_event)
     )
 
     return {"status": "started"}
@@ -215,9 +194,8 @@ async def person_follow_stop():
     if person_follow_stop_event:
         person_follow_stop_event.set()
 
-    # Try to stop robot
     try:
-        await send_ws_command("stop", 0)
+        await send_motor_command("stop", 0)
     except:
         pass
 
@@ -226,10 +204,6 @@ async def person_follow_stop():
 
     return {"status": "stopped"}
 
-
-# ============================================================
-#                     STATIC + HOME
-# ============================================================
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
