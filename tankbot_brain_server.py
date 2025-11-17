@@ -14,35 +14,32 @@ import time
 
 from person_follow import person_follow_loop
 
-
 # ============================================================
 #               GLOBAL SETTINGS
 # ============================================================
 
-VIDEO_URL = "http://192.168.1.50:81/stream"  # ESP32-CAM stream
-WS_URL    = "ws://tankbot.local:81"          # tankbot motor controller
+VIDEO_URL = "http://192.168.1.50:81/stream"   # ESP32-CAM stream
+WS_URL    = "ws://tankbot.local:81"           # tankbot motor controller
 
 model = YOLO("yolov8n.pt")
-
 app = FastAPI()
 
 person_follow_task: asyncio.Task | None = None
 person_follow_stop_event: asyncio.Event | None = None
 
+# NEW: last command globally shared with UI
+last_sent_command = {"cmd": "stop", "speed": 0}
+
 
 # ============================================================
-#                 GLOBAL FRAME BUFFER
+#                 FRAME GRABBER THREAD
 # ============================================================
 
 latest_frame = None
 frame_lock = threading.Lock()
 
+
 def frame_grabber():
-    """
-    Runs forever in a dedicated thread.
-    Reads frames from ESP32-CAM using a SINGLE VideoCapture.
-    Stores the *latest* frame in global latest_frame.
-    """
     global latest_frame
 
     print("[FRAME] Starting frame grabber thread...")
@@ -54,17 +51,12 @@ def frame_grabber():
     while True:
         ok, frame = cap.read()
         if ok and frame is not None:
-            # Rotate camera (ESP32-CAM is sideways)
             frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-
             with frame_lock:
                 latest_frame = frame
-
-        # small sleep avoids hogging CPU
         time.sleep(0.001)
 
 
-# Start frame grabber thread on startup
 threading.Thread(target=frame_grabber, daemon=True).start()
 
 
@@ -73,7 +65,6 @@ threading.Thread(target=frame_grabber, daemon=True).start()
 # ============================================================
 
 def get_latest_frame():
-    global latest_frame
     with frame_lock:
         if latest_frame is None:
             raise RuntimeError("No frame received yet")
@@ -83,6 +74,18 @@ def get_latest_frame():
 def annotate_frame(frame):
     results = model(frame, imgsz=320, verbose=False)
     return results[0].plot()
+
+
+async def send_ws_command(cmd: str, speed: int):
+    """
+    Sends a command to ESP32 and updates last_sent_command.
+    """
+    global last_sent_command
+
+    async with websockets.connect(WS_URL) as ws:
+        await ws.send(f"{cmd},{speed}")
+
+    last_sent_command = {"cmd": cmd, "speed": speed}
 
 
 # ============================================================
@@ -124,17 +127,27 @@ def detect():
 @app.post("/drive")
 async def drive(req: DriveRequest):
     cmd = req.cmd.lower()
-    if cmd not in ("forward", "backward", "left", "right", "stop", "f", "b", "l", "r", "s"):
+    if cmd not in ("forward", "backward", "left", "right", "stop", "s", "f", "b", "l", "r"):
         raise HTTPException(status_code=400, detail="Invalid cmd")
 
+    # Normalize
+    if cmd == "s": cmd = "stop"
+    if cmd == "f": cmd = "forward"
+    if cmd == "b": cmd = "backward"
+    if cmd == "l": cmd = "left"
+    if cmd == "r": cmd = "right"
+
     try:
-        async with websockets.connect(WS_URL) as ws:
-            await ws.send(f"{cmd},{req.speed}")
+        await send_ws_command(cmd, req.speed)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"WS error: {e}")
 
     return {"status": "ok"}
 
+
+# ============================================================
+#                  LIVE YOLO MJPEG STREAM
+# ============================================================
 
 @app.get("/video")
 def video():
@@ -143,11 +156,10 @@ def video():
             try:
                 frame = get_latest_frame()
                 annotated = annotate_frame(frame)
+                ok, jpg = cv2.imencode(".jpg", annotated)
+                if not ok:
+                    continue
             except:
-                continue
-
-            ok, jpg = cv2.imencode(".jpg", annotated)
-            if not ok:
                 continue
 
             yield (
@@ -163,12 +175,21 @@ def video():
     )
 
 
+# ============================================================
+#                     STATUS ENDPOINT
+# ============================================================
+
 @app.get("/status")
 def status():
     return {
         "latest_frame": "ok" if latest_frame is not None else "none",
+        "last_command": last_sent_command
     }
 
+
+# ============================================================
+#               PERSON FOLLOW CONTROL ROUTES
+# ============================================================
 
 @app.post("/person_follow/start")
 async def person_follow_start():
@@ -194,9 +215,9 @@ async def person_follow_stop():
     if person_follow_stop_event:
         person_follow_stop_event.set()
 
+    # Try to stop robot
     try:
-        async with websockets.connect(WS_URL) as ws:
-            await ws.send("stop,0")
+        await send_ws_command("stop", 0)
     except:
         pass
 
@@ -205,6 +226,10 @@ async def person_follow_stop():
 
     return {"status": "stopped"}
 
+
+# ============================================================
+#                     STATIC + HOME
+# ============================================================
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
