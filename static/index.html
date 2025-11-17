@@ -13,7 +13,76 @@
       padding:20px;
     }
     h1 { margin-bottom: 8px; }
-    /* (your CSS stays exactly the same) */
+
+    /* ---------------------- GAMEPAD VISUAL ---------------------- */
+    .cmd-display {
+      width: 150px;
+      height: 150px;
+      position: relative;
+      margin: 20px auto;
+    }
+
+    .cmd-display div {
+      position: absolute;
+      width: 50px;
+      height: 50px;
+      font-size: 32px;
+      text-align: center;
+      line-height: 50px;
+      opacity: 0.2;
+      transition: 0.2s ease;
+    }
+
+    .cmd-up    { top: 0; left: 50px; }
+    .cmd-left  { top: 50px; left: 0; }
+    .cmd-stop  { top: 50px; left: 50px; }
+    .cmd-right { top: 50px; left: 100px; }
+    .cmd-down  { top: 100px; left: 50px; }
+
+    .cmd-active {
+      opacity: 1;
+      color: #00f;
+      transform: scale(1.2);
+    }
+
+    /* existing CSS kept intact */
+    .cards {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .card {
+      background: #12172b;
+      padding: 16px;
+      border-radius: 8px;
+      width: 300px;
+    }
+    .card-title { font-weight: 600; margin-bottom: 8px; }
+
+    .status-pill {
+      display:flex;
+      align-items:center;
+      gap:8px;
+      background:#222a48;
+      padding:6px 10px;
+      border-radius: 20px;
+      width: fit-content;
+    }
+    .status-pill .dot {
+      width:10px;
+      height:10px;
+      border-radius:50%;
+      background:red;
+    }
+    .status-pill.online .dot { background: #0f0; }
+    .status-pill.offline .dot { background: #900; }
+
+    .small { font-size: 12px; opacity: 0.8; }
+
+    .video-container img {
+      width:100%;
+      border-radius:6px;
+    }
   </style>
 </head>
 <body>
@@ -38,43 +107,60 @@
     </div>
   </div>
 
-<div class="card" style="max-width: 680px; width: 100%; margin-top:16px;">
-� <div class="card-title">Modes</div>
-  <button id="person-start">Start Person Follow</button>
-  <button id="person-stop">Stop Person Follow</button>
-  <div id="person-status" class="small">Mode: idle</div>
-</div>
+  <div class="card" style="max-width: 680px; width: 100%; margin-top:16px;">
+    <div class="card-title">Modes</div>
+    <button id="person-start">Start Person Follow</button>
+    <button id="person-stop">Stop Person Follow</button>
+    <div id="person-status" class="small">Mode: idle</div>
+  </div>
 
-<script>
-  async function postJson(url) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}"
-    });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return res.json();
-  }
+  <!-- ---------------- GAMEPAD COMMAND DISPLAY ---------------- -->
+  <div class="card" style="max-width:680px; width:100%; margin-top:16px;">
+    <div class="card-title">Last Command</div>
 
-  document.getElementById("person-start").onclick = async () => {
-    try {
-      await postJson("/person_follow/start");
-      document.getElementById("person-status").textContent = "Mode: person-follow (running)";
-    } catch (e) {
-      document.getElementById("person-status").textContent = "Mode: error starting (" + e.message + ")";
+    <div class="cmd-display">
+      <div id="cmd-up" class="cmd-up">↑</div>
+      <div id="cmd-left" class="cmd-left">←</div>
+      <div id="cmd-stop" class="cmd-stop">⏺</div>
+      <div id="cmd-right" class="cmd-right">→</div>
+      <div id="cmd-down" class="cmd-down">↓</div>
+    </div>
+
+    <div class="small">Shows the last direction command sent to the robot.</div>
+  </div>
+
+
+  <script>
+    async function postJson(url) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}"
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
     }
-  };
 
-  document.getElementById("person-stop").onclick = async () => {
-    try {
-      await postJson("/person_follow/stop");
-      document.getElementById("person-status").textContent = "Mode: idle";
-    } catch (e) {
-      document.getElementById("person-status").textContent = "Mode: error stopping (" + e.message + ")";
-    }
-  };
-</script>
+    document.getElementById("person-start").onclick = async () => {
+      try {
+        await postJson("/person_follow/start");
+        document.getElementById("person-status").textContent = "Mode: person-follow (running)";
+      } catch (e) {
+        document.getElementById("person-status").textContent =
+          "Mode: error starting (" + e.message + ")";
+      }
+    };
 
+    document.getElementById("person-stop").onclick = async () => {
+      try {
+        await postJson("/person_follow/stop");
+        document.getElementById("person-status").textContent = "Mode: idle";
+      } catch (e) {
+        document.getElementById("person-status").textContent =
+          "Mode: error stopping (" + e.message + ")";
+      }
+    };
+  </script>
 
   <div class="card" style="max-width:680px; width:100%;">
     <div class="card-title">Live YOLO View</div>
@@ -84,13 +170,30 @@
     <div class="small">If this is blank, check ESP32-CAM.</div>
   </div>
 
+  <!-- ---------------- STATUS + GAMEPAD JS ---------------- -->
   <script>
+    function updateGamepad(cmd) {
+      document.querySelectorAll(".cmd-display div")
+        .forEach(el => el.classList.remove("cmd-active"));
+
+      if (cmd === "forward")  document.getElementById("cmd-up").classList.add("cmd-active");
+      if (cmd === "left")     document.getElementById("cmd-left").classList.add("cmd-active");
+      if (cmd === "right")    document.getElementById("cmd-right").classList.add("cmd-active");
+      if (cmd === "backward") document.getElementById("cmd-down").classList.add("cmd-active");
+      if (cmd === "stop")     document.getElementById("cmd-stop").classList.add("cmd-active");
+    }
+
     async function refreshStatus() {
       try {
         const res = await fetch("/status", {cache:"no-store"});
         const data = await res.json();
+
         setStatus("video-status", data.video_stream === "online");
         setStatus("tankbot-status", data.tankbot === "online");
+
+        if (data.last_command && data.last_command.cmd) {
+          updateGamepad(data.last_command.cmd);
+        }
       } catch (e) {
         setStatus("video-status", false);
         setStatus("tankbot-status", false);
@@ -106,7 +209,8 @@
     }
 
     refreshStatus();
-    setInterval(refreshStatus, 2000);
+    setInterval(refreshStatus, 250);
   </script>
+
 </body>
 </html>
