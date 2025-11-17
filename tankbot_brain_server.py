@@ -37,10 +37,11 @@ last_sent_command = {"cmd": "stop", "speed": 0}
 latest_frame = None
 frame_lock = threading.Lock()
 
+
 def frame_grabber():
     global latest_frame
     print("[FRAME] Starting frame grabber...")
-    
+
     cap = cv2.VideoCapture(VIDEO_URL)
     if not cap.isOpened():
         raise RuntimeError("Cannot open ESP32-CAM stream")
@@ -48,10 +49,12 @@ def frame_grabber():
     while True:
         ok, frame = cap.read()
         if ok and frame is not None:
+            # Rotate if your ESP32-CAM orientation requires it
             frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
             with frame_lock:
                 latest_frame = frame
         time.sleep(0.001)
+
 
 threading.Thread(target=frame_grabber, daemon=True).start()
 
@@ -122,11 +125,16 @@ async def drive(req: DriveRequest):
     cmd = req.cmd.lower()
 
     # normalize
-    if cmd in ("s", "stp"): cmd = "stop"
-    if cmd == "f": cmd = "forward"
-    if cmd == "b": cmd = "backward"
-    if cmd == "l": cmd = "left"
-    if cmd == "r": cmd = "right"
+    if cmd in ("s", "stp"):
+        cmd = "stop"
+    if cmd == "f":
+        cmd = "forward"
+    if cmd == "b":
+        cmd = "backward"
+    if cmd == "l":
+        cmd = "left"
+    if cmd == "r":
+        cmd = "right"
 
     if cmd not in ("forward", "backward", "left", "right", "stop"):
         raise HTTPException(status_code=400, detail="Invalid cmd")
@@ -181,7 +189,12 @@ async def person_follow_start():
 
     loop = asyncio.get_running_loop()
     person_follow_task = loop.create_task(
-        person_follow_loop(get_latest_frame, send_motor_command, model, person_follow_stop_event)
+        person_follow_loop(
+            get_latest_frame,
+            send_motor_command,
+            model,
+            person_follow_stop_event,
+        )
     )
 
     return {"status": "started"}
@@ -196,7 +209,7 @@ async def person_follow_stop():
 
     try:
         await send_motor_command("stop", 0)
-    except:
+    except Exception:
         pass
 
     person_follow_task = None
@@ -206,6 +219,7 @@ async def person_follow_stop():
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 @app.get("/")
 def home():
