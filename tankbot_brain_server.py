@@ -202,8 +202,14 @@ async def person_follow_start():
         # Her thread kendi event loop’una ihtiyaç duyacak
         asyncio.run(person_follow_loop(VIDEO_URL, WS_URL, model, person_follow_stop_event))
 
-    person_follow_thread = threading.Thread(target=runner, daemon=True)
+    person_follow_thread = threading.Thread(
+        target=lambda: asyncio.run(
+            person_follow_loop(get_latest_frame, WS_URL, model, person_follow_stop_event)
+        ),
+        daemon=True
+    )
     person_follow_thread.start()
+
 
     return {"status": "started"}
 
