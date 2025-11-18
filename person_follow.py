@@ -218,7 +218,7 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
             if abs(err) < CENTER_DEADZONE:
                 cmd = ("forward", FORWARD_SPEED)
             else:
-                cmd = ("right", TURN_SPEED) if err < 0 else ("left", TURN_SPEED)
+                cmd = ("right", TURN_SPEED) if err > 0 else ("left", TURN_SPEED)
 
             now = time.time()
             if cmd != last_cmd and (now - last_send_time) > SEND_RATE_LIMIT:
