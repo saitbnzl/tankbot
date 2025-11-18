@@ -153,9 +153,11 @@ def adaptive_turn_calibration(last_cmd, small):
                 if yaw_norm < slow_threshold:
                     # dönmüyor / çok az dönüyor -> hafifçe hızlandır
                     turn_speed_scale *= 1.03   # +%5
+                    print(f"[ADAPTIVE][SPEED UP] yaw_norm={yaw_norm:.3f} → speeding up to {turn_speed_scale:.2f}")
                 elif yaw_norm > fast_threshold:
                     # çok hızlı dönüyor -> daha ciddi yavaşlat
                     turn_speed_scale *= 0.93   # -%10
+                    print(f"[ADAPTIVE][SLOW DOWN] yaw_norm={yaw_norm:.3f} → slowing down to {turn_speed_scale:.2f}")
                 else:
                     # "iyi" aralıkta: yavaşça 1.0'a doğru geri çek
                     if turn_speed_scale > 1.0:
