@@ -7,7 +7,7 @@ from ultralytics import YOLO
 # ==========================
 # CONFIG
 # ==========================
-CONF_THRESHOLD      = 0.3
+CONF_THRESHOLD      = 0.35
 MIN_FOLLOW_CONF     = 0.4
 
 CENTER_DEADZONE     = 0.16
