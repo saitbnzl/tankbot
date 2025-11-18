@@ -211,8 +211,8 @@ async def person_follow_start():
             try:
                 async with websockets.connect(
                     WS_URL,
-                    ping_interval=30,   # 30 sn’de bir ping
-                    ping_timeout=30,    # 30 sn cevap bekle
+                    ping_interval=None,
+                    ping_timeout=None,
                 ) as ws:
                     print("[FOLLOW] Motor WS connected", flush=True)
 
