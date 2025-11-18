@@ -23,6 +23,23 @@ def get_config():
 def update_config(new_values: dict):
     for k, v in new_values.items():
         if k in config:
+            # auto-convert numbers
+            old = config[k]
+            try:
+                if isinstance(old, bool):
+                    v = bool(v)
+                elif isinstance(old, int):
+                    v = int(v)
+                elif isinstance(old, float):
+                    v = float(v)
+                # strings remain strings
+            except:
+                print(f"[CONFIG] Type error for {k}. Ignoring.")
+                continue
+
             config[k] = v
+        else:
+            print(f"[CONFIG] WARNING: Key '{k}' not in config → ignored.")
+
     print("[CONFIG] Updated:", config)
     return config
