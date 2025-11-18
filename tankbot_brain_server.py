@@ -197,12 +197,20 @@ async def person_follow_start():
 
     print("[DEBUG] Starting person-follow THREAD", flush=True)
 
+    async def send_motor_command(cmd: str, speed: int):
+        import json, websockets
+        try:
+            async with websockets.connect(WS_URL) as ws:
+                await ws.send(json.dumps({"cmd": cmd, "speed": speed}))
+        except Exception as e:
+            print("[SEND_MOTOR][ERROR]", e)
+
     def runner():
         try:
             asyncio.run(
                 person_follow_loop(
-                    get_latest_frame,   # frame_provider
-                    WS_URL,
+                    get_latest_frame,          # frame provider
+                    send_motor_command,        # <--- FONKSİYON, ARTIK STRING DEĞIL
                     model,
                     person_follow_stop_event,
                 )
@@ -214,7 +222,6 @@ async def person_follow_start():
     person_follow_thread.start()
 
     return {"status": "started"}
-
 
 
 @app.post("/person_follow/stop")
