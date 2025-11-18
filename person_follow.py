@@ -5,6 +5,7 @@ import time
 import traceback
 
 import cv2
+import numpy as np
 from ultralytics import YOLO
 
 from person_follow_config import get_config  # <-- NEW
@@ -18,8 +19,12 @@ last_seen_side = None
 
 # ADAPTIVE TURN:
 # Farklı zeminlerde (halı / fayans vb.) dönüş hızını kameradan ölçüp ayarlamak için
-turn_speed_scale = 1.0      # 1.0 = configteki hız, 2.0 = 2 katı
+turn_speed_scale = 1.0      # 1.0 = configteki hız
 _prev_calib_frame = None    # küçük gri frame saklamak için
+
+# Adaptif sınırlar (istersen config'e taşıyabiliriz)
+MIN_TURN_SCALE = 0.7
+MAX_TURN_SCALE = 1.5
 
 
 # ==========================
@@ -75,7 +80,10 @@ def pick_main_person(results, frame_area: float, conf_threshold: float):
 def estimate_global_shift_x(prev_small_gray, curr_small_gray):
     """
     İki küçük gri frame arasındaki ortalama yatay hareketi (dx, piksel) döner.
-    Çok kaba ama iş görür.
+
+    Outlier'lar (frame skip, ani blur, vs.) için:
+    - Optical flow'tan gelen dx map'inin 10–90 percentile aralığını alıyoruz
+      ve sadece o aralıktaki piksel hareketlerinden ortalama hesaplıyoruz.
     """
     flow = cv2.calcOpticalFlowFarneback(
         prev_small_gray,
@@ -89,15 +97,34 @@ def estimate_global_shift_x(prev_small_gray, curr_small_gray):
         1.2,
         0,
     )
-    # flow[..., 0] = x yönündeki hareket
-    dx = flow[..., 0].mean()
-    return dx
+
+    dx = flow[..., 0].astype(np.float32).ravel()
+    if dx.size == 0:
+        return 0.0
+
+    # Percentile clipping: aşırı uç değerleri kırp
+    p10, p90 = np.percentile(dx, [10, 90])
+    mask = (dx >= p10) & (dx <= p90)
+
+    # Eğer maske çok az piksel içeriyorsa, fallback olarak tüm dx'in mean'ini kullan
+    if mask.sum() < dx.size * 0.1:
+        mean_dx = float(dx.mean())
+    else:
+        mean_dx = float(dx[mask].mean())
+
+    return mean_dx
 
 
 def adaptive_turn_calibration(last_cmd, small):
     """
     Son komut bir dönüş komutuysa (left/right), ardışık iki küçük frame
     arasındaki yatay kaymaya bakarak turn_speed_scale'i ayarlar.
+
+    Amaç:
+    - 1.0 etrafında kal,
+    - Çok yavaş dönüyorsa scale'i yavaşça ↑ (MAX_TURN_SCALE'e kadar),
+    - Çok hızlı dönüyorsa scale'i daha hızlı ↓ (MIN_TURN_SCALE'e kadar),
+    - Abs(yaw_norm) aşırı büyükse (örneğin > 0.5) bunu "glitch" sayıp ignore et.
     """
     global _prev_calib_frame, turn_speed_scale
 
@@ -109,18 +136,38 @@ def adaptive_turn_calibration(last_cmd, small):
             try:
                 dx = estimate_global_shift_x(_prev_calib_frame, small)
                 # 0..1 arası kabaca "dönüş miktarı"
-                yaw_norm = abs(dx) / max(float(small.shape[1]), 1.0)
+                width = float(small.shape[1]) if small.shape[1] > 0 else 1.0
+                yaw_norm = abs(dx) / width
+
+                # Çok saçma büyük değerler (örneğin frame skip / ciddi glitch) → ignore
+                if yaw_norm > 0.5:
+                    # print(f"[ADAPTIVE] Ignoring outlier yaw_norm={yaw_norm:.3f}")
+                    _prev_calib_frame = small
+                    return
 
                 # Bu eşikler tamamen deneysel; sahada ayarlayabilirsin
-                target_min = 0.02   # bundan küçükse -> çok yavaş dönüyor
-                target_max = 0.08   # bundan büyükse -> çok hızlı dönüyor
+                slow_threshold = 0.01   # bundan küçükse -> çok yavaş dönüyor
+                fast_threshold = 0.06   # bundan büyükse -> çok hızlı dönüyor
 
-                if yaw_norm < target_min:
-                    # Halı / yüksek sürtünme -> hız biraz artır
-                    turn_speed_scale = min(turn_speed_scale * 1.05, 2.5)
-                elif yaw_norm > target_max:
-                    # Çok kaygan zemin -> hız biraz azalt
-                    turn_speed_scale = max(turn_speed_scale * 0.95, 0.4)
+                # Scale'i biraz yavaş artır / daha hızlı azalt
+                if yaw_norm < slow_threshold:
+                    # dönmüyor / çok az dönüyor -> hafifçe hızlandır
+                    turn_speed_scale *= 1.02   # +%2
+                elif yaw_norm > fast_threshold:
+                    # çok hızlı dönüyor -> daha ciddi yavaşlat
+                    turn_speed_scale *= 0.90   # -%10
+                else:
+                    # "iyi" aralıkta: yavaşça 1.0'a doğru geri çek
+                    if turn_speed_scale > 1.0:
+                        turn_speed_scale *= 0.99   # üstten 1'e yaklaş
+                    elif turn_speed_scale < 1.0:
+                        turn_speed_scale *= 1.01   # alttan 1'e yaklaş
+
+                # Sınırları uygula
+                if turn_speed_scale > MAX_TURN_SCALE:
+                    turn_speed_scale = MAX_TURN_SCALE
+                if turn_speed_scale < MIN_TURN_SCALE:
+                    turn_speed_scale = MIN_TURN_SCALE
 
                 # Debug istersen:
                 # print(f"[ADAPTIVE] yaw_norm={yaw_norm:.3f} scale={turn_speed_scale:.2f}")
@@ -265,7 +312,11 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
                     scan_dir = last_seen_side or "right"
 
                     if last_cmd != (scan_dir, effective_search_turn_speed) and (now - last_send_time) > SEND_RATE_LIMIT:
-                        print(f"[FOLLOW][SCAN] rotating {scan_dir}… (smart search, scale={turn_speed_scale:.2f})")
+                        print(
+                            f"[FOLLOW][SCAN] rotating {scan_dir}… "
+                            f"(smart search, scale={turn_speed_scale:.2f}, "
+                            f"speed={effective_search_turn_speed})"
+                        )
                         await send_motor_command(scan_dir, effective_search_turn_speed)
                         last_cmd = (scan_dir, effective_search_turn_speed)
                         last_send_time = now
@@ -325,7 +376,8 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
             if cmd != last_cmd and (now - last_send_time) > SEND_RATE_LIMIT:
                 print(
                     f"[FOLLOW][TRACK] {cmd[0]} err={err:.2f} conf={conf:.2f} "
-                    f"last_seen_side={last_seen_side} turn_scale={turn_speed_scale:.2f}"
+                    f"last_seen_side={last_seen_side} turn_scale={turn_speed_scale:.2f} "
+                    f"speed={cmd[1]}"
                 )
                 await send_motor_command(cmd[0], cmd[1])
                 last_cmd = cmd
