@@ -11,8 +11,9 @@ import cv2
 import threading
 import time
 
-from person_follow import person_follow_loop
-from person_follow_config import get_config, update_config
+person_follow_thread: threading.Thread | None = None
+person_follow_stop_event: threading.Event | None = None
+
 
 # ============================================================
 #               GLOBAL SETTINGS
@@ -181,9 +182,9 @@ def status():
 
 @app.post("/person_follow/start")
 async def person_follow_start():
-    global person_follow_task, person_follow_stop_event
+    global person_follow_thread, person_follow_stop_event
 
-    if person_follow_task is not None and not person_follow_task.done():
+    if person_follow_thread is not None and person_follow_thread.is_alive():
         raise HTTPException(status_code=400, detail="Person follow already running")
 
     if not isinstance(VIDEO_URL, str):
@@ -192,30 +193,36 @@ async def person_follow_start():
     if not isinstance(WS_URL, str):
         raise HTTPException(status_code=500, detail=f"WS_URL is corrupted: {type(WS_URL)}")
 
-    person_follow_stop_event = asyncio.Event()
-    loop = asyncio.get_running_loop()
+    # yeni stop event
+    person_follow_stop_event = threading.Event()
 
-    print("[DEBUG] Creating follow loop with VIDEO_URL =", VIDEO_URL)
-    person_follow_task = loop.create_task(
-        person_follow_loop(VIDEO_URL, WS_URL, model, person_follow_stop_event)
-    )
+    print("[DEBUG] Starting person-follow THREAD with VIDEO_URL =", VIDEO_URL)
+
+    def runner():
+        # Her thread kendi event loop’una ihtiyaç duyacak
+        asyncio.run(person_follow_loop(VIDEO_URL, WS_URL, model, person_follow_stop_event))
+
+    person_follow_thread = threading.Thread(target=runner, daemon=True)
+    person_follow_thread.start()
 
     return {"status": "started"}
 
 
 @app.post("/person_follow/stop")
 async def person_follow_stop():
-    global person_follow_task, person_follow_stop_event
+    global person_follow_thread, person_follow_stop_event
 
-    if person_follow_stop_event:
+    if person_follow_stop_event is not None:
         person_follow_stop_event.set()
+        print("[DEBUG] person_follow_stop_event set")
 
     try:
         await send_motor_command("stop", 0)
     except Exception:
         pass
 
-    person_follow_task = None
+    # Thread'i öldürmüyoruz, kendi kendine bitecek; referansı temizleyelim
+    person_follow_thread = None
     person_follow_stop_event = None
 
     return {"status": "stopped"}

@@ -6,6 +6,7 @@ import websockets
 
 from person_follow_config import get_config
 
+
 def pick_main_person(results, CONF_THRESHOLD):
     boxes = results.boxes
     if boxes is None or len(boxes) == 0:
@@ -24,23 +25,27 @@ def pick_main_person(results, CONF_THRESHOLD):
         w = x2 - x1
         h = y2 - y1
         area = w * h
+
         if area > best_area:
-            cx = x1 + w/2
-            cy = y1 + h/2
+            cx = x1 + w / 2
+            cy = y1 + h / 2
             best_area = area
             best = (cx, cy, w, h, float(conf))
 
     return best
 
 
-async def person_follow_loop(video_url, ws_url, model, stop_event):
-    cfg = get_config()
-    print("[FOLLOW] LOOP STARTED with config:", cfg, flush=True)
 
-    cap = cv2.VideoCapture(video_url)
-    if not cap.isOpened():
-        print("[FOLLOW][ERROR] Cannot open video stream", flush=True)
-        return
+async def person_follow_loop(frame_provider, ws_url, model, stop_event):
+    """
+    frame_provider -> a callable function returning a frame (from main thread)
+    ws_url -> tankbot WebSocket URL
+    model -> YOLO model
+    stop_event -> threading.Event()
+    """
+
+    cfg = get_config()
+    print("[FOLLOW] STARTING LOOP with config:", cfg, flush=True)
 
     try:
         async with websockets.connect(ws_url) as ws:
@@ -48,16 +53,21 @@ async def person_follow_loop(video_url, ws_url, model, stop_event):
             no_person_frames = 0
 
             while not stop_event.is_set():
-                ok, frame = cap.read()
-                if not ok or frame is None:
+
+                # ---- Get a frame from global frame_grabber ----
+                try:
+                    frame = frame_provider()
+                except Exception as e:
+                    print("[FOLLOW] frame_provider error:", e, flush=True)
                     await asyncio.sleep(cfg["TRACK_INTERVAL_SEC"])
                     continue
 
-                frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-
                 H, W = frame.shape[:2]
-                results = model(frame, imgsz=320, verbose=False)[0]
 
+                # ---- YOLO inference ----
+                results = model(frame, imgsz=cfg["IMG_SIZE"], verbose=False)[0]
+
+                # ---- Extract main person ----
                 target = pick_main_person(results, cfg["CONF_THRESHOLD"])
 
                 if target is None:
@@ -68,6 +78,7 @@ async def person_follow_loop(video_url, ws_url, model, stop_event):
                         await ws.send("stop,0")
                         break
 
+                    # SEARCH MODE
                     if last_cmd != ("right", cfg["SEARCH_TURN_SPEED"]):
                         print("[FOLLOW] SEARCHING (turn right)", flush=True)
                         await ws.send(f"right,{cfg['SEARCH_TURN_SPEED']}")
@@ -76,21 +87,21 @@ async def person_follow_loop(video_url, ws_url, model, stop_event):
                     await asyncio.sleep(cfg["TRACK_INTERVAL_SEC"])
                     continue
 
-                # person detected
+                # ---- Person detected ----
                 no_person_frames = 0
                 cx, cy, w, h, conf = target
-                mid_x = W/2
-                err_x = (cx - mid_x) / mid_x
+                mid_x = W / 2
+                err_x = (cx - mid_x) / mid_x  # normalized -1..+1
 
-                # too close check
+                # ---- Too close ----
                 if cfg["STOP_ON_TOO_CLOSE"]:
-                    area_frac = (w*h) / (W*H)
+                    area_frac = (w * h) / (W * H)
                     if area_frac > cfg["MAX_PERSON_AREA"]:
                         print("[FOLLOW] PERSON TOO CLOSE -> STOP", flush=True)
                         await ws.send("stop,0")
                         break
 
-                # centering logic
+                # ---- Centering logic ----
                 if abs(err_x) < cfg["CENTER_DEADZONE"]:
                     cmd = ("forward", cfg["FORWARD_SPEED"])
                 else:
@@ -106,10 +117,11 @@ async def person_follow_loop(video_url, ws_url, model, stop_event):
 
                 await asyncio.sleep(cfg["TRACK_INTERVAL_SEC"])
 
+            # Stop on exit
             await ws.send("stop,0")
 
     except Exception as e:
         print("[FOLLOW][ERROR]", e, flush=True)
+
     finally:
-        cap.release()
-        print("[FOLLOW] LOOP EXIT", flush=True)
+        print("[FOLLOW] LOOP EXITED", flush=True)
