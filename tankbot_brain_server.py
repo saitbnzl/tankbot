@@ -11,6 +11,8 @@ import cv2
 import threading
 import time
 
+from person_follow import person_follow_loop
+
 person_follow_thread: threading.Thread | None = None
 person_follow_stop_event: threading.Event | None = None
 
@@ -187,31 +189,32 @@ async def person_follow_start():
     if person_follow_thread is not None and person_follow_thread.is_alive():
         raise HTTPException(status_code=400, detail="Person follow already running")
 
-    if not isinstance(VIDEO_URL, str):
-        raise HTTPException(status_code=500, detail=f"VIDEO_URL is corrupted: {type(VIDEO_URL)}")
-
     if not isinstance(WS_URL, str):
         raise HTTPException(status_code=500, detail=f"WS_URL is corrupted: {type(WS_URL)}")
 
-    # yeni stop event
+    # new stop event for this run
     person_follow_stop_event = threading.Event()
 
-    print("[DEBUG] Starting person-follow THREAD with VIDEO_URL =", VIDEO_URL)
+    print("[DEBUG] Starting person-follow THREAD", flush=True)
 
     def runner():
-        # Her thread kendi event loop’una ihtiyaç duyacak
-        asyncio.run(person_follow_loop(VIDEO_URL, WS_URL, model, person_follow_stop_event))
+        try:
+            asyncio.run(
+                person_follow_loop(
+                    get_latest_frame,   # frame_provider
+                    WS_URL,
+                    model,
+                    person_follow_stop_event,
+                )
+            )
+        except Exception as e:
+            print("[FOLLOW][THREAD ERROR]", e, flush=True)
 
-    person_follow_thread = threading.Thread(
-        target=lambda: asyncio.run(
-            person_follow_loop(get_latest_frame, WS_URL, model, person_follow_stop_event)
-        ),
-        daemon=True
-    )
+    person_follow_thread = threading.Thread(target=runner, daemon=True)
     person_follow_thread.start()
 
-
     return {"status": "started"}
+
 
 
 @app.post("/person_follow/stop")
