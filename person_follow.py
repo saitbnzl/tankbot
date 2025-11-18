@@ -4,6 +4,7 @@ import asyncio
 import time
 import traceback
 
+import cv2
 from ultralytics import YOLO
 
 from person_follow_config import get_config  # <-- NEW
@@ -14,6 +15,11 @@ state = "SCAN"
 # SMART SEARCH:
 # Kişi en son hangi tarafta görüldü? ("left", "right" veya None)
 last_seen_side = None
+
+# ADAPTIVE TURN:
+# Farklı zeminlerde (halı / fayans vb.) dönüş hızını kameradan ölçüp ayarlamak için
+turn_speed_scale = 1.0      # 1.0 = configteki hız, 2.0 = 2 katı
+_prev_calib_frame = None    # küçük gri frame saklamak için
 
 
 # ==========================
@@ -64,6 +70,69 @@ def pick_main_person(results, frame_area: float, conf_threshold: float):
 
 
 # ==========================
+# ADAPTIVE TURN HELPERS
+# ==========================
+def estimate_global_shift_x(prev_small_gray, curr_small_gray):
+    """
+    İki küçük gri frame arasındaki ortalama yatay hareketi (dx, piksel) döner.
+    Çok kaba ama iş görür.
+    """
+    flow = cv2.calcOpticalFlowFarneback(
+        prev_small_gray,
+        curr_small_gray,
+        None,
+        0.5,
+        3,
+        15,
+        3,
+        5,
+        1.2,
+        0,
+    )
+    # flow[..., 0] = x yönündeki hareket
+    dx = flow[..., 0].mean()
+    return dx
+
+
+def adaptive_turn_calibration(last_cmd, small):
+    """
+    Son komut bir dönüş komutuysa (left/right), ardışık iki küçük frame
+    arasındaki yatay kaymaya bakarak turn_speed_scale'i ayarlar.
+    """
+    global _prev_calib_frame, turn_speed_scale
+
+    if small is None:
+        return
+
+    if last_cmd is not None and last_cmd[0] in ("left", "right"):
+        if _prev_calib_frame is not None:
+            try:
+                dx = estimate_global_shift_x(_prev_calib_frame, small)
+                # 0..1 arası kabaca "dönüş miktarı"
+                yaw_norm = abs(dx) / max(float(small.shape[1]), 1.0)
+
+                # Bu eşikler tamamen deneysel; sahada ayarlayabilirsin
+                target_min = 0.02   # bundan küçükse -> çok yavaş dönüyor
+                target_max = 0.08   # bundan büyükse -> çok hızlı dönüyor
+
+                if yaw_norm < target_min:
+                    # Halı / yüksek sürtünme -> hız biraz artır
+                    turn_speed_scale = min(turn_speed_scale * 1.05, 2.5)
+                elif yaw_norm > target_max:
+                    # Çok kaygan zemin -> hız biraz azalt
+                    turn_speed_scale = max(turn_speed_scale * 0.95, 0.4)
+
+                # Debug istersen:
+                # print(f"[ADAPTIVE] yaw_norm={yaw_norm:.3f} scale={turn_speed_scale:.2f}")
+
+            except Exception as e:
+                print("[ADAPTIVE] calibration error:", e)
+
+    # Son frame'i sakla
+    _prev_calib_frame = small
+
+
+# ==========================
 # MAIN FOLLOW LOOP
 # ==========================
 async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_event: asyncio.Event):
@@ -74,7 +143,8 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
     stop_event:         asyncio.Event to stop loop
     """
     global state
-    global last_seen_side  # SMART SEARCH: en son yön bilgisini bu fonksiyon içinde değiştireceğiz
+    global last_seen_side
+    global turn_speed_scale
 
     print("[FOLLOW] Starting follow loop...")
 
@@ -90,24 +160,37 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
 
             # --- read latest config each iteration (dict is mutated in-place) ---
             cfg = get_config()
-            CONF_THRESHOLD      = float(cfg.get("CONF_THRESHOLD", 0.50))
-            IMG_SIZE            = int(cfg.get("IMG_SIZE", 320))
-            CENTER_DEADZONE     = float(cfg.get("CENTER_DEADZONE", 0.15))
-            TURN_SPEED          = int(cfg.get("TURN_SPEED", 60))
-            FORWARD_SPEED       = int(cfg.get("FORWARD_SPEED", 70))
-            SEARCH_TURN_SPEED   = int(cfg.get("SEARCH_TURN_SPEED", 40))
-            FOLLOW_LOST_GRACE   = int(cfg.get("LOST_FRAMES_GRACE", 30))
-            SCAN_LOST_TIMEOUT   = int(cfg.get("LOST_FRAMES_LIMIT", 500))
-            SEND_RATE_LIMIT     = float(cfg.get("TRACK_INTERVAL_SEC", 0.2))
-            MAX_PERSON_AREA     = float(cfg.get("MAX_PERSON_AREA", 0.70))
-            STOP_ON_TOO_CLOSE   = bool(cfg.get("STOP_ON_TOO_CLOSE", True))
+            CONF_THRESHOLD          = float(cfg.get("CONF_THRESHOLD", 0.50))
+            IMG_SIZE                = int(cfg.get("IMG_SIZE", 320))
+            CENTER_DEADZONE         = float(cfg.get("CENTER_DEADZONE", 0.15))
+            TURN_SPEED_BASE         = int(cfg.get("TURN_SPEED", 60))
+            FORWARD_SPEED           = int(cfg.get("FORWARD_SPEED", 70))
+            SEARCH_TURN_SPEED_BASE  = int(cfg.get("SEARCH_TURN_SPEED", 40))
+            FOLLOW_LOST_GRACE       = int(cfg.get("LOST_FRAMES_GRACE", 30))
+            SCAN_LOST_TIMEOUT       = int(cfg.get("LOST_FRAMES_LIMIT", 500))
+            SEND_RATE_LIMIT         = float(cfg.get("TRACK_INTERVAL_SEC", 0.2))
+            MAX_PERSON_AREA         = float(cfg.get("MAX_PERSON_AREA", 0.70))
+            STOP_ON_TOO_CLOSE       = bool(cfg.get("STOP_ON_TOO_CLOSE", True))
 
             # MIN_FOLLOW_CONF: ayrı key yoksa CONF_THRESHOLD ile aynı olsun
-            MIN_FOLLOW_CONF     = float(cfg.get("MIN_FOLLOW_CONF", CONF_THRESHOLD))
+            MIN_FOLLOW_CONF         = float(cfg.get("MIN_FOLLOW_CONF", CONF_THRESHOLD))
+
+            # ---- ADAPTIVE TURN: scaled speeds ----
+            effective_turn_speed        = int(TURN_SPEED_BASE * turn_speed_scale)
+            effective_search_turn_speed = int(SEARCH_TURN_SPEED_BASE * turn_speed_scale)
 
             frame = get_frame()
             H, W = frame.shape[:2]
             frame_area = float(W * H)
+
+            # --- ADAPTIVE TURN: küçük gri frame hazırla ve kalibrasyon yap ---
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            small_w = max(W // 4, 1)
+            small_h = max(H // 4, 1)
+            small = cv2.resize(gray, (small_w, small_h))
+
+            # Bir önceki komut bir dönüş komutu ise, bu frame ile kalibrasyon yap
+            adaptive_turn_calibration(last_cmd, small)
 
             # YOLO tahmini (konfigüre edilebilir IMG_SIZE ile)
             results = model(frame, imgsz=IMG_SIZE, verbose=False)[0]
@@ -158,8 +241,8 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
                     state = "SCAN"
                     scan_no_person = 0
                     lost_follow_frames = 0
-                    # FOLLOW → SCAN geçişinde last_seen_side olduğu gibi kalıyor,
-                    # böylece SCAN aşamasında akıllı tarama yapacağız.
+                    # FOLLOW → SCAN geçişinde last_seen_side olduğu gibi kalır (smart search)
+                    await asyncio.sleep(0.05)
                     continue
 
                 if state == "SCAN":
@@ -181,10 +264,10 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
                     # bilinmiyorsa eski davranış: sağa dön.
                     scan_dir = last_seen_side or "right"
 
-                    if last_cmd != (scan_dir, SEARCH_TURN_SPEED) and (now - last_send_time) > SEND_RATE_LIMIT:
-                        print(f"[FOLLOW][SCAN] rotating {scan_dir}… (smart search)")
-                        await send_motor_command(scan_dir, SEARCH_TURN_SPEED)
-                        last_cmd = (scan_dir, SEARCH_TURN_SPEED)
+                    if last_cmd != (scan_dir, effective_search_turn_speed) and (now - last_send_time) > SEND_RATE_LIMIT:
+                        print(f"[FOLLOW][SCAN] rotating {scan_dir}… (smart search, scale={turn_speed_scale:.2f})")
+                        await send_motor_command(scan_dir, effective_search_turn_speed)
+                        last_cmd = (scan_dir, effective_search_turn_speed)
                         last_send_time = now
 
                     await asyncio.sleep(0.05)
@@ -218,7 +301,7 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
             scan_no_person = 0
 
             if state in ("SCAN", "IDLE"):
-                print(f"[FOLLOW] Person detected → FOLLOW (from {state})")
+                print(f("[FOLLOW] Person detected → FOLLOW (from {state})"))
                 state = "FOLLOW"
 
             # Hedefe göre yön belirleme
@@ -231,16 +314,19 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
                 last_seen_side = "right"
             elif err < -CENTER_DEADZONE:
                 last_seen_side = "left"
-            # Eğer deadzone içindeyse last_seen_side olduğu gibi kalsın (son anlamlı yönü koru).
+            # Deadzone içindeyse last_seen_side olduğu gibi kalır.
 
             if abs(err) < CENTER_DEADZONE:
                 cmd = ("forward", FORWARD_SPEED)
             else:
-                cmd = ("right", TURN_SPEED) if err > 0 else ("left", TURN_SPEED)
+                cmd = ("right", effective_turn_speed) if err > 0 else ("left", effective_turn_speed)
 
             now = time.time()
             if cmd != last_cmd and (now - last_send_time) > SEND_RATE_LIMIT:
-                print(f"[FOLLOW][TRACK] {cmd[0]} err={err:.2f} conf={conf:.2f} last_seen_side={last_seen_side}")
+                print(
+                    f"[FOLLOW][TRACK] {cmd[0]} err={err:.2f} conf={conf:.2f} "
+                    f"last_seen_side={last_seen_side} turn_scale={turn_speed_scale:.2f}"
+                )
                 await send_motor_command(cmd[0], cmd[1])
                 last_cmd = cmd
                 last_send_time = now
