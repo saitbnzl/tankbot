@@ -214,10 +214,8 @@ async def person_follow_start():
 
                     # 2) Bu WS üzerinden komut gönderen fonksiyon
                     async def send_motor_command(cmd: str, speed: int):
-                        msg = {"cmd": cmd, "speed": int(speed)}
-                        text = json.dumps(msg)
-                        print("[FOLLOW->WS]", text, flush=True)
-                        await ws.send(text)
+                        msg = f"{cmd},{speed}"
+                        await ws.send(msg)
 
                     # 3) Follow loop'u başlat
                     await person_follow_loop(
