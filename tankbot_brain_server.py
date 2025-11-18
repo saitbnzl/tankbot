@@ -183,19 +183,21 @@ def status():
 async def person_follow_start():
     global person_follow_task, person_follow_stop_event
 
-    if person_follow_task and not person_follow_task.done():
-        raise HTTPException(400, "Already running")
+    if person_follow_task is not None and not person_follow_task.done():
+        raise HTTPException(status_code=400, detail="Person follow already running")
+
+    if not isinstance(VIDEO_URL, str):
+        raise HTTPException(status_code=500, detail=f"VIDEO_URL is corrupted: {type(VIDEO_URL)}")
+
+    if not isinstance(WS_URL, str):
+        raise HTTPException(status_code=500, detail=f"WS_URL is corrupted: {type(WS_URL)}")
 
     person_follow_stop_event = asyncio.Event()
-
     loop = asyncio.get_running_loop()
+
+    print("[DEBUG] Creating follow loop with VIDEO_URL =", VIDEO_URL)
     person_follow_task = loop.create_task(
-        person_follow_loop(
-            get_latest_frame,
-            send_motor_command,
-            model,
-            person_follow_stop_event,
-        )
+        person_follow_loop(VIDEO_URL, WS_URL, model, person_follow_stop_event)
     )
 
     return {"status": "started"}
