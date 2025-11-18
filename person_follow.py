@@ -11,6 +11,10 @@ from person_follow_config import get_config  # <-- NEW
 # possible states: "SCAN", "FOLLOW", "IDLE", "BLOCKED"
 state = "SCAN"
 
+# SMART SEARCH:
+# Kişi en son hangi tarafta görüldü? ("left", "right" veya None)
+last_seen_side = None
+
 
 # ==========================
 # PERSON SELECTION
@@ -70,6 +74,7 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
     stop_event:         asyncio.Event to stop loop
     """
     global state
+    global last_seen_side  # SMART SEARCH: en son yön bilgisini bu fonksiyon içinde değiştireceğiz
 
     print("[FOLLOW] Starting follow loop...")
 
@@ -99,7 +104,6 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
 
             # MIN_FOLLOW_CONF: ayrı key yoksa CONF_THRESHOLD ile aynı olsun
             MIN_FOLLOW_CONF     = float(cfg.get("MIN_FOLLOW_CONF", CONF_THRESHOLD))
-
 
             frame = get_frame()
             H, W = frame.shape[:2]
@@ -154,6 +158,8 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
                     state = "SCAN"
                     scan_no_person = 0
                     lost_follow_frames = 0
+                    # FOLLOW → SCAN geçişinde last_seen_side olduğu gibi kalıyor,
+                    # böylece SCAN aşamasında akıllı tarama yapacağız.
                     continue
 
                 if state == "SCAN":
@@ -169,11 +175,16 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
                         continue
 
                     now = time.time()
-                    # SCAN aşamasında SEARCH_TURN_SPEED kullan
-                    if last_cmd != ("right", SEARCH_TURN_SPEED) and (now - last_send_time) > SEND_RATE_LIMIT:
-                        print("[FOLLOW][SCAN] rotating right…")
-                        await send_motor_command("right", SEARCH_TURN_SPEED)
-                        last_cmd = ("right", SEARCH_TURN_SPEED)
+
+                    # SMART SEARCH:
+                    # Eğer last_seen_side biliniyorsa o tarafa dön;
+                    # bilinmiyorsa eski davranış: sağa dön.
+                    scan_dir = last_seen_side or "right"
+
+                    if last_cmd != (scan_dir, SEARCH_TURN_SPEED) and (now - last_send_time) > SEND_RATE_LIMIT:
+                        print(f"[FOLLOW][SCAN] rotating {scan_dir}… (smart search)")
+                        await send_motor_command(scan_dir, SEARCH_TURN_SPEED)
+                        last_cmd = (scan_dir, SEARCH_TURN_SPEED)
                         last_send_time = now
 
                     await asyncio.sleep(0.05)
@@ -214,6 +225,14 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
             mid_x = W / 2.0
             err = (cx - mid_x) / mid_x  # -1..+1
 
+            # SMART SEARCH:
+            # Kişi merkezin anlamlı şekilde sol/sağında ise, o yönü last_seen_side olarak kaydet.
+            if err > CENTER_DEADZONE:
+                last_seen_side = "right"
+            elif err < -CENTER_DEADZONE:
+                last_seen_side = "left"
+            # Eğer deadzone içindeyse last_seen_side olduğu gibi kalsın (son anlamlı yönü koru).
+
             if abs(err) < CENTER_DEADZONE:
                 cmd = ("forward", FORWARD_SPEED)
             else:
@@ -221,7 +240,7 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
 
             now = time.time()
             if cmd != last_cmd and (now - last_send_time) > SEND_RATE_LIMIT:
-                print(f"[FOLLOW][TRACK] {cmd[0]} err={err:.2f} conf={conf:.2f}")
+                print(f"[FOLLOW][TRACK] {cmd[0]} err={err:.2f} conf={conf:.2f} last_seen_side={last_seen_side}")
                 await send_motor_command(cmd[0], cmd[1])
                 last_cmd = cmd
                 last_send_time = now
