@@ -86,9 +86,13 @@ async def send_motor_command(cmd: str, speed: int):
     Ensures last_sent_command is ALWAYS updated.
     """
     global last_sent_command
+    msg = f"{cmd},{speed}"
+
 
     async with websockets.connect(WS_URL) as ws:
-        await ws.send(f"{cmd},{speed}")
+        await ws.send(msg)
+        print(f"[MOTOR][SEND] {msg}", flush=True)
+
 
     last_sent_command = {"cmd": cmd, "speed": speed}
 
