@@ -56,7 +56,7 @@ async def person_follow_loop(video_url, ws_url, model, stop_event):
                 frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
                 H, W = frame.shape[:2]
-                results = model(frame, imgsz=cfg["IMG_SIZE"], verbose=False)[0]
+                results = model(frame, imgsz=320, verbose=False)[0]
 
                 target = pick_main_person(results, cfg["CONF_THRESHOLD"])
 
