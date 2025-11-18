@@ -210,6 +210,63 @@
     </div>
   </div>
 
+  <div class="card" style="max-width:680px; width:100%; margin-top:16px;">
+  <div class="card-title">Person Follow Hyperparameters</div>
+
+  <label>Forward Speed:
+    <input type="range" min="10" max="100" value="55"
+           id="cfg_forward_speed">
+    <span id="cfg_forward_speed_val">55</span>
+  </label><br>
+
+  <label>Turn Speed:
+    <input type="range" min="10" max="100" value="40"
+           id="cfg_turn_speed">
+    <span id="cfg_turn_speed_val">40</span>
+  </label><br>
+
+  <label>Center Deadzone:
+    <input type="range" min="0" max="0.4" step="0.01" value="0.15"
+           id="cfg_deadzone">
+    <span id="cfg_deadzone_val">0.15</span>
+  </label><br>
+
+  <button id="cfg_save_btn">Save Settings</button>
+  <div id="cfg_save_status" class="small">Not saved yet</div>
+</div>
+
+<script>
+async function saveCfg(key, value) {
+  await fetch("/config/update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, value })
+  });
+}
+
+document.getElementById("cfg_save_btn").onclick = async () => {
+  const fwd = document.getElementById("cfg_forward_speed").value;
+  const turn = document.getElementById("cfg_turn_speed").value;
+  const dz = document.getElementById("cfg_deadzone").value;
+
+  await saveCfg("FORWARD_SPEED", parseInt(fwd));
+  await saveCfg("TURN_SPEED", parseInt(turn));
+  await saveCfg("CENTER_DEADZONE", parseFloat(dz));
+
+  document.getElementById("cfg_save_status").textContent = "Saved!";
+};
+
+document.getElementById("cfg_forward_speed").oninput = (e) =>
+  document.getElementById("cfg_forward_speed_val").textContent = e.target.value;
+
+document.getElementById("cfg_turn_speed").oninput = (e) =>
+  document.getElementById("cfg_turn_speed_val").textContent = e.target.value;
+
+document.getElementById("cfg_deadzone").oninput = (e) =>
+  document.getElementById("cfg_deadzone_val").textContent = e.target.value;
+</script>
+
+
   <!-- CONTROL JS -->
   <script>
     async function postJson(url) {

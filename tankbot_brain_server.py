@@ -12,6 +12,7 @@ import threading
 import time
 
 from person_follow import person_follow_loop
+from person_follow_config import get_config, update_config
 
 # ============================================================
 #               GLOBAL SETTINGS
@@ -217,6 +218,20 @@ async def person_follow_stop():
 
     return {"status": "stopped"}
 
+
+
+@app.get("/config")
+def config_get():
+    return get_config()
+
+class UpdateConfigRequest(BaseModel):
+    key: str
+    value: float | int | bool | str
+
+@app.post("/config/update")
+def config_update(req: UpdateConfigRequest):
+    new_cfg = update_config({req.key: req.value})
+    return new_cfg
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
