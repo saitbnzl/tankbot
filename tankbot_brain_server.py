@@ -10,11 +10,13 @@ import websockets
 import cv2
 import threading
 import time
+import json
+
 
 from person_follow import person_follow_loop
 from person_follow_config import get_config, update_config
 
-person_follow_thread: threading.Thread | None = None
+person_follow_thread = None
 person_follow_stop_event: threading.Event | None = None
 
 
