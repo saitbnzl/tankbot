@@ -24,7 +24,7 @@ _prev_calib_frame = None    # küçük gri frame saklamak için
 
 # Adaptif sınırlar (istersen config'e taşıyabiliriz)
 MIN_TURN_SCALE = 0.75
-MAX_TURN_SCALE = 1.30
+MAX_TURN_SCALE = 1.5
 
 
 # ==========================
@@ -152,7 +152,7 @@ def adaptive_turn_calibration(last_cmd, small):
                 # Scale'i biraz yavaş artır / daha hızlı azalt
                 if yaw_norm < slow_threshold:
                     # dönmüyor / çok az dönüyor -> hafifçe hızlandır
-                    turn_speed_scale *= 1.05   # +%5
+                    turn_speed_scale *= 1.03   # +%5
                 elif yaw_norm > fast_threshold:
                     # çok hızlı dönüyor -> daha ciddi yavaşlat
                     turn_speed_scale *= 0.93   # -%10
