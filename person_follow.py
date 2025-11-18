@@ -301,7 +301,7 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
             scan_no_person = 0
 
             if state in ("SCAN", "IDLE"):
-                print(f("[FOLLOW] Person detected → FOLLOW (from {state})"))
+                print(f"[FOLLOW] Person detected → FOLLOW (from {state})")
                 state = "FOLLOW"
 
             # Hedefe göre yön belirleme
