@@ -7,15 +7,15 @@ from ultralytics import YOLO
 # ==========================
 # CONFIG
 # ==========================
-CONF_THRESHOLD      = 0.40
-MIN_FOLLOW_CONF     = 0.50
+CONF_THRESHOLD      = 0.3
+MIN_FOLLOW_CONF     = 0.4
 
-CENTER_DEADZONE     = 0.15
+CENTER_DEADZONE     = 0.16
 TURN_SPEED          = 60
-FORWARD_SPEED       = 70
+FORWARD_SPEED       = 65
 
-FOLLOW_LOST_GRACE   = 15        # FOLLOW → SCAN only after N missed frames
-SCAN_LOST_TIMEOUT   = 35        # SCAN → IDLE timeout
+FOLLOW_LOST_GRACE   = 30        # FOLLOW → SCAN only after N missed frames
+SCAN_LOST_TIMEOUT   = 60        # SCAN → IDLE timeout
 SEND_RATE_LIMIT     = 0.1      # seconds per command
 
 BLOCKED_RATIO_THRESHOLD = 0.75  # frame'in %75'i kaplanırsa BLOCKED
