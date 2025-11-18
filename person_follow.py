@@ -229,4 +229,6 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
 
         except Exception as e:
             print("[FOLLOW] Error:", e)
+            print("[FOLLOW] Last config:", get_config())
+            print("[FOLLOW] Types:", {k: type(v).__name__ for k,v in get_config().items()})
             await asyncio.sleep(0.5)
