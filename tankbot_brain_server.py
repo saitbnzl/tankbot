@@ -202,32 +202,41 @@ async def person_follow_start():
 
     print("[DEBUG] Starting person-follow THREAD", flush=True)
 
-    async def send_motor_command(cmd: str, speed: int):
-        import json, websockets
-        try:
-            async with websockets.connect(WS_URL) as ws:
-                await ws.send(json.dumps({"cmd": cmd, "speed": speed}))
-        except Exception as e:
-            print("[SEND_MOTOR][ERROR]", e)
-
     def runner():
+        async def main():
+            # 1) WS bağlantısını AÇ
+            print(f"[FOLLOW] Connecting motor WS: {WS_URL}", flush=True)
+            try:
+                async with websockets.connect(WS_URL) as ws:
+                    print("[FOLLOW] Motor WS connected", flush=True)
+
+                    # 2) Bu WS üzerinden komut gönderen fonksiyon
+                    async def send_motor_command(cmd: str, speed: int):
+                        msg = {"cmd": cmd, "speed": int(speed)}
+                        text = json.dumps(msg)
+                        print("[FOLLOW->WS]", text, flush=True)
+                        await ws.send(text)
+
+                    # 3) Follow loop'u başlat
+                    await person_follow_loop(
+                        get_latest_frame,          # frame provider
+                        send_motor_command,        # <<< FONKSİYON, string değil
+                        model,
+                        person_follow_stop_event,  # threading.Event ama is_set() yetiyor
+                    )
+
+            except Exception as e:
+                print("[FOLLOW][WS ERROR]", repr(e), flush=True)
+
         try:
-            asyncio.run(
-                person_follow_loop(
-                    get_latest_frame,          # frame provider
-                    send_motor_command,        # <--- FONKSİYON, ARTIK STRING DEĞIL
-                    model,
-                    person_follow_stop_event,
-                )
-            )
+            asyncio.run(main())
         except Exception as e:
-            print("[FOLLOW][THREAD ERROR]", e, flush=True)
+            print("[FOLLOW][THREAD ERROR]", repr(e), flush=True)
 
     person_follow_thread = threading.Thread(target=runner, daemon=True)
     person_follow_thread.start()
 
     return {"status": "started"}
-
 
 @app.post("/person_follow/stop")
 async def person_follow_stop():
