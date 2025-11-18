@@ -209,7 +209,11 @@ async def person_follow_start():
             # 1) WS bağlantısını AÇ
             print(f"[FOLLOW] Connecting motor WS: {WS_URL}", flush=True)
             try:
-                async with websockets.connect(WS_URL) as ws:
+                async with websockets.connect(
+                    WS_URL,
+                    ping_interval=30,   # 30 sn’de bir ping
+                    ping_timeout=30,    # 30 sn cevap bekle
+                ) as ws:
                     print("[FOLLOW] Motor WS connected", flush=True)
 
                     # 2) Bu WS üzerinden komut gönderen fonksiyon
@@ -227,6 +231,8 @@ async def person_follow_start():
 
             except Exception as e:
                 print("[FOLLOW][WS ERROR]", repr(e), flush=True)
+                await asyncio.sleep(1)  # 1 sn sonra reconnect dene
+
 
         try:
             asyncio.run(main())

@@ -90,17 +90,16 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
             CENTER_DEADZONE     = float(cfg.get("CENTER_DEADZONE", 0.15))
             TURN_SPEED          = int(cfg.get("TURN_SPEED", 60))
             FORWARD_SPEED       = int(cfg.get("FORWARD_SPEED", 70))
-            SEARCH_TURN_SPEED   = int(cfg.get("SEARCH_TURN_SPEED", 30))
-            FOLLOW_LOST_GRACE   = int(cfg.get("LOST_FRAMES_LIMIT", 15))
-            SEND_RATE_LIMIT     = float(cfg.get("TRACK_INTERVAL_SEC", 0.15))
-            MAX_PERSON_AREA     = float(cfg.get("MAX_PERSON_AREA", 0.50))
+            SEARCH_TURN_SPEED   = int(cfg.get("SEARCH_TURN_SPEED", 40))
+            FOLLOW_LOST_GRACE   = int(cfg.get("LOST_FRAMES_GRACE", 30))
+            SCAN_LOST_TIMEOUT   = int(cfg.get("LOST_FRAMES_LIMIT", 500))
+            SEND_RATE_LIMIT     = float(cfg.get("TRACK_INTERVAL_SEC", 0.2))
+            MAX_PERSON_AREA     = float(cfg.get("MAX_PERSON_AREA", 0.70))
             STOP_ON_TOO_CLOSE   = bool(cfg.get("STOP_ON_TOO_CLOSE", True))
 
             # MIN_FOLLOW_CONF: ayrı key yoksa CONF_THRESHOLD ile aynı olsun
             MIN_FOLLOW_CONF     = float(cfg.get("MIN_FOLLOW_CONF", CONF_THRESHOLD))
 
-            # SCAN_LOST_TIMEOUT şimdilik sabit tutalım, istersen config'e de ekleriz:
-            SCAN_LOST_TIMEOUT   = 35
 
             frame = get_frame()
             H, W = frame.shape[:2]
