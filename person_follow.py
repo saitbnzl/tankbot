@@ -15,7 +15,7 @@ TURN_SPEED          = 60
 FORWARD_SPEED       = 65
 
 FOLLOW_LOST_GRACE   = 30        # FOLLOW → SCAN only after N missed frames
-SCAN_LOST_TIMEOUT   = 60        # SCAN → IDLE timeout
+SCAN_LOST_TIMEOUT   = 300        # SCAN → IDLE timeout
 SEND_RATE_LIMIT     = 0.1      # seconds per command
 
 BLOCKED_RATIO_THRESHOLD = 0.75  # frame'in %75'i kaplanırsa BLOCKED
