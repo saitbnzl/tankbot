@@ -23,8 +23,8 @@ turn_speed_scale = 1.0      # 1.0 = configteki hız
 _prev_calib_frame = None    # küçük gri frame saklamak için
 
 # Adaptif sınırlar (istersen config'e taşıyabiliriz)
-MIN_TURN_SCALE = 0.7
-MAX_TURN_SCALE = 1.5
+MIN_TURN_SCALE = 0.8
+MAX_TURN_SCALE = 1.2
 
 
 # ==========================
