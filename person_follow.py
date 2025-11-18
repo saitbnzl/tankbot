@@ -76,7 +76,6 @@ async def person_follow_loop(frame_provider, ws_url, model, stop_event):
                     if no_person_frames > cfg["LOST_FRAMES_LIMIT"]:
                         print("[FOLLOW] LOST PERSON -> STOPPING", flush=True)
                         await ws.send("stop,0")
-                        break
 
                     # SEARCH MODE
                     if last_cmd != ("right", cfg["SEARCH_TURN_SPEED"]):
@@ -99,7 +98,6 @@ async def person_follow_loop(frame_provider, ws_url, model, stop_event):
                     if area_frac > cfg["MAX_PERSON_AREA"]:
                         print("[FOLLOW] PERSON TOO CLOSE -> STOP", flush=True)
                         await ws.send("stop,0")
-                        break
 
                 # ---- Centering logic ----
                 if abs(err_x) < cfg["CENTER_DEADZONE"]:

@@ -223,14 +223,14 @@ async def person_follow_stop():
 
     if person_follow_stop_event is not None:
         person_follow_stop_event.set()
-        print("[DEBUG] person_follow_stop_event set")
+        print("[DEBUG] person_follow_stop_event set", flush=True)
 
     try:
         await send_motor_command("stop", 0)
     except Exception:
         pass
 
-    # Thread'i öldürmüyoruz, kendi kendine bitecek; referansı temizleyelim
+    # thread kendisi bitecek; sadece referansı bırak
     person_follow_thread = None
     person_follow_stop_event = None
 
