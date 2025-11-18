@@ -2,6 +2,8 @@
 
 import asyncio
 import time
+import traceback
+
 from ultralytics import YOLO
 
 from person_follow_config import get_config  # <-- NEW
