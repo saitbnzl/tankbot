@@ -41,7 +41,7 @@ def pick_main_person(results, frame_area: float, conf_threshold: float):
             continue
 
         x1, y1, x2, y2 = map(float, box)
-        w, h = x2 - x1, y2 - y2
+        w, h = x2 - x1, y2 - y1
         area = w * h
         ratio = area / frame_area if frame_area > 0 else 0.0
 
@@ -230,5 +230,6 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
         except Exception as e:
             print("[FOLLOW] Error:", e)
             print("[FOLLOW] Last config:", get_config())
-            print("[FOLLOW] Types:", {k: type(v).__name__ for k,v in get_config().items()})
+            print("[FOLLOW] Types:", {k: type(v).__name__ for k, v in get_config().items()})
+            traceback.print_exc()
             await asyncio.sleep(0.5)
