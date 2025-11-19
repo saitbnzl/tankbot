@@ -24,7 +24,7 @@ _prev_calib_frame = None    # küçük gri frame saklamak için
 
 # Adaptif sınırlar (istersen config'e taşıyabiliriz)
 MIN_TURN_SCALE = 0.7
-MAX_TURN_SCALE = 1.6
+MAX_TURN_SCALE = 1.7
 
 STUCK_YAW        = 0.002   # bunun altı: "resmen dönmüyoruz"
 SLOW_YAW         = 0.005   # bunun altı: "yavaş dönüyor"
@@ -89,6 +89,12 @@ def estimate_global_shift_x(prev_small_gray, curr_small_gray):
     - Optical flow'tan gelen dx map'inin 10–90 percentile aralığını alıyoruz
       ve sadece o aralıktaki piksel hareketlerinden ortalama hesaplıyoruz.
     """
+    if prev_small_gray.shape != curr_small_gray.shape:
+        return 0.0
+    
+    if prev_small_gray.size == 0 or curr_small_gray.size == 0:
+        return 0.0
+    
     flow = cv2.calcOpticalFlowFarneback(
         prev_small_gray,
         curr_small_gray,
@@ -149,14 +155,11 @@ def adaptive_turn_calibration(last_cmd, small):
                     _prev_calib_frame = small
                     return
 
-                # Bu eşikler tamamen deneysel; sahada ayarlayabilirsin
-                slow_threshold = 0.03   # bundan küçükse -> çok yavaş dönüyor
-                fast_threshold = 0.06   # bundan büyükse -> çok hızlı dönüyor
-                print(f"[ADAPTIVE] yaw_norm={yaw_norm:.3f}")
+                #print(f"[ADAPTIVE] yaw_norm={yaw_norm:.3f}")
                 # Scale'i biraz yavaş artır / daha hızlı azalt
                 if yaw_norm < STUCK_YAW:
                     # dönmüyor / çok az dönüyor -> hafifçe hızlandır
-                    turn_speed_scale *= 1.05   # +%5
+                    turn_speed_scale *= 1.04   # +%5
                     print(f"[ADAPTIVE][SPEED UP] yaw_norm={yaw_norm:.3f} → speeding up to {turn_speed_scale:.2f}")
                 elif yaw_norm < SLOW_YAW:
                     # yavaş dönüyor -> biraz hızlandır
@@ -199,6 +202,8 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
     model:              YOLO instance
     stop_event:         asyncio.Event to stop loop
     """
+    loop_start = time.perf_counter()
+
     global state
     global last_seen_side
     global turn_speed_scale
@@ -237,6 +242,9 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
             effective_search_turn_speed = int(SEARCH_TURN_SPEED_BASE * turn_speed_scale)
 
             frame = get_frame()
+            if frame is None or frame.size == 0:
+                await asyncio.sleep(0.05)
+                continue
             H, W = frame.shape[:2]
             frame_area = float(W * H)
 
@@ -393,7 +401,10 @@ async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_ev
                 last_cmd = cmd
                 last_send_time = now
 
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.03)
+            loop_duration = time.perf_counter() - loop_start
+            if loop_duration > 0.1:  # 100ms threshold
+                print(f"Slow loop: {loop_duration*1000:.1f}ms")
 
         except Exception as e:
             print("[FOLLOW] Error:", e)
