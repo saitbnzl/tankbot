@@ -23,8 +23,12 @@ turn_speed_scale = 1.0      # 1.0 = configteki hız
 _prev_calib_frame = None    # küçük gri frame saklamak için
 
 # Adaptif sınırlar (istersen config'e taşıyabiliriz)
-MIN_TURN_SCALE = 0.75
-MAX_TURN_SCALE = 1.3
+MIN_TURN_SCALE = 0.7
+MAX_TURN_SCALE = 1.6
+
+STUCK_YAW        = 0.002   # bunun altı: "resmen dönmüyoruz"
+SLOW_YAW         = 0.005   # bunun altı: "yavaş dönüyor"
+FAST_YAW         = 0.010   # bunun üstü: "fazla hızlı"
 
 
 # ==========================
@@ -150,20 +154,24 @@ def adaptive_turn_calibration(last_cmd, small):
                 fast_threshold = 0.06   # bundan büyükse -> çok hızlı dönüyor
                 print(f"[ADAPTIVE] yaw_norm={yaw_norm:.3f}")
                 # Scale'i biraz yavaş artır / daha hızlı azalt
-                if yaw_norm < slow_threshold:
+                if yaw_norm < STUCK_YAW:
                     # dönmüyor / çok az dönüyor -> hafifçe hızlandır
-                    turn_speed_scale *= 1.03   # +%5
+                    turn_speed_scale *= 1.05   # +%5
                     print(f"[ADAPTIVE][SPEED UP] yaw_norm={yaw_norm:.3f} → speeding up to {turn_speed_scale:.2f}")
-                elif yaw_norm > fast_threshold:
+                elif yaw_norm < SLOW_YAW:
+                    # yavaş dönüyor -> biraz hızlandır
+                    turn_speed_scale *= 1.02   # +%2
+                    print(f"[ADAPTIVE][SPEED UP] yaw_norm={yaw_norm:.3f} → speeding up to {turn_speed_scale:.2f}")
+                elif yaw_norm > FAST_YAW:
                     # çok hızlı dönüyor -> daha ciddi yavaşlat
                     turn_speed_scale *= 0.93   # -%10
                     print(f"[ADAPTIVE][SLOW DOWN] yaw_norm={yaw_norm:.3f} → slowing down to {turn_speed_scale:.2f}")
                 else:
                     # "iyi" aralıkta: yavaşça 1.0'a doğru geri çek
                     if turn_speed_scale > 1.0:
-                        turn_speed_scale *= 0.99   # üstten 1'e yaklaş
+                        turn_speed_scale *= 0.97   # üstten 1'e yaklaş
                     elif turn_speed_scale < 1.0:
-                        turn_speed_scale *= 1.01   # alttan 1'e yaklaş
+                        turn_speed_scale *= 1.03   # alttan 1'e yaklaş
 
                 # Sınırları uygula
                 if turn_speed_scale > MAX_TURN_SCALE:
