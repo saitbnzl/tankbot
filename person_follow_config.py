@@ -11,8 +11,8 @@ config = {
     "FORWARD_SPEED": 70,        # forward speed (0-100)
     "SEARCH_TURN_SPEED": 50,    # speed when searching for a person
     "LOST_FRAMES_LIMIT": 200,    # after N frames with no person -> stop
-    "LOST_FRAMES_GRACE": 15,    # after N frames with no person -> stop
-    "TRACK_INTERVAL_SEC": 0.15, # delay between control commands
+    "LOST_FRAMES_GRACE": 10,    # after N frames with no person -> stop
+    "TRACK_INTERVAL_SEC": 0.1, # delay between control commands
     "MAX_PERSON_AREA": 0.70,    # stop if person covers >50% of image
     "STOP_ON_TOO_CLOSE": True,  # enable stop when too close
 }

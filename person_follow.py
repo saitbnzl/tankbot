@@ -26,8 +26,8 @@ _prev_calib_frame = None    # küçük gri frame saklamak için
 MIN_TURN_SCALE = 0.7
 MAX_TURN_SCALE = 1.7
 
-STUCK_YAW        = 0.002   # bunun altı: "resmen dönmüyoruz"
-SLOW_YAW         = 0.005   # bunun altı: "yavaş dönüyor"
+STUCK_YAW        = 0.003   # bunun altı: "resmen dönmüyoruz"
+SLOW_YAW         = 0.006   # bunun altı: "yavaş dönüyor"
 FAST_YAW         = 0.010   # bunun üstü: "fazla hızlı"
 
 
@@ -159,7 +159,7 @@ def adaptive_turn_calibration(last_cmd, small):
                 # Scale'i biraz yavaş artır / daha hızlı azalt
                 if yaw_norm < STUCK_YAW:
                     # dönmüyor / çok az dönüyor -> hafifçe hızlandır
-                    turn_speed_scale *= 1.04   # +%5
+                    turn_speed_scale *= 1.03   # +%5
                     print(f"[ADAPTIVE][SPEED UP] yaw_norm={yaw_norm:.3f} → speeding up to {turn_speed_scale:.2f}")
                 elif yaw_norm < SLOW_YAW:
                     # yavaş dönüyor -> biraz hızlandır
@@ -167,7 +167,7 @@ def adaptive_turn_calibration(last_cmd, small):
                     print(f"[ADAPTIVE][SPEED UP] yaw_norm={yaw_norm:.3f} → speeding up to {turn_speed_scale:.2f}")
                 elif yaw_norm > FAST_YAW:
                     # çok hızlı dönüyor -> daha ciddi yavaşlat
-                    turn_speed_scale *= 0.93   # -%10
+                    turn_speed_scale *= 0.95   # -%10
                     print(f"[ADAPTIVE][SLOW DOWN] yaw_norm={yaw_norm:.3f} → slowing down to {turn_speed_scale:.2f}")
                 else:
                     # "iyi" aralıkta: yavaşça 1.0'a doğru geri çek
