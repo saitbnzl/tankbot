@@ -163,7 +163,7 @@ def adaptive_turn_calibration(last_cmd, small):
                     print(f"[ADAPTIVE][SPEED UP] yaw_norm={yaw_norm:.3f} → speeding up to {turn_speed_scale:.2f}")
                 elif yaw_norm < SLOW_YAW:
                     # yavaş dönüyor -> biraz hızlandır
-                    turn_speed_scale *= 1.02   # +%2
+                    turn_speed_scale *= 1.01   # +%2
                     print(f"[ADAPTIVE][SPEED UP] yaw_norm={yaw_norm:.3f} → speeding up to {turn_speed_scale:.2f}")
                 elif yaw_norm > FAST_YAW:
                     # çok hızlı dönüyor -> daha ciddi yavaşlat
