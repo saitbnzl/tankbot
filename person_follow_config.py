@@ -6,7 +6,7 @@
 config = {
     "CONF_THRESHOLD": 0.50,     # YOLO person confidence
     "IMG_SIZE": 320,            # YOLO image size (higher = better accuracy, slower)
-    "CENTER_DEADZONE": 0.2,    # ±15% horizontally is “centered”
+    "CENTER_DEADZONE": 0.25,    # ±15% horizontally is “centered”
     "TURN_SPEED": 30,           # rotation speed (0-100)
     "FORWARD_SPEED": 70,        # forward speed (0-100)
     "SEARCH_TURN_SPEED": 50,    # speed when searching for a person
