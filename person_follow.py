@@ -24,7 +24,7 @@ _prev_calib_frame = None    # küçük gri frame saklamak için
 
 # Adaptif sınırlar (istersen config'e taşıyabiliriz)
 MIN_TURN_SCALE = 0.7
-MAX_TURN_SCALE = 1.7
+MAX_TURN_SCALE = 1.5
 
 STUCK_YAW        = 0.003   # bunun altı: "resmen dönmüyoruz"
 SLOW_YAW         = 0.006   # bunun altı: "yavaş dönüyor"
