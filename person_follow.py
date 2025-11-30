@@ -23,8 +23,8 @@ turn_speed_scale = 1.0      # 1.0 = configteki hız
 _prev_calib_frame = None    # küçük gri frame saklamak için
 
 # Adaptif sınırlar (istersen config'e taşıyabiliriz)
-MIN_TURN_SCALE = 0.75
-MAX_TURN_SCALE = 1.3
+MIN_TURN_SCALE = 0.8
+MAX_TURN_SCALE = 1.4
 
 STUCK_YAW        = 0.003   # bunun altı: "resmen dönmüyoruz"
 SLOW_YAW         = 0.006   # bunun altı: "yavaş dönüyor"
