@@ -4,7 +4,6 @@ from fastapi.responses import StreamingResponse, FileResponse
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from ultralytics import YOLO
 import asyncio
 import websockets
 import cv2
@@ -20,6 +19,22 @@ person_follow_thread = None
 person_follow_stop_event: threading.Event | None = None
 
 
+# NEW: toggle between CPU YOLO and Hailo
+USE_HAILO = True  # set False to go back to plain Ultralytics on CPU
+
+if USE_HAILO:
+    # NEW: Hailo-backed YOLO wrapper which mimics Ultralytics API
+    from hailo_yolo_adapter import HailoYoloDetector as Detector
+else:
+    from ultralytics import YOLO as Detector
+
+from person_follow import person_follow_loop
+from person_follow_config import get_config, update_config
+
+person_follow_thread = None
+person_follow_stop_event: threading.Event | None = None
+
+
 # ============================================================
 #               GLOBAL SETTINGS
 # ============================================================
@@ -27,7 +42,18 @@ person_follow_stop_event: threading.Event | None = None
 VIDEO_URL = "http://192.168.1.50:81/stream"
 WS_URL    = "ws://tankbot.local:81"
 
-model = YOLO("yolov8n.pt")
+# NEW: init model via Detector, but keep the same name "model"
+if USE_HAILO:
+    # You’ll point these to your compiled HEF + labels
+    # (person-only HEF strongly recommended for your use case)
+    model = Detector(
+        hef_path="resources/yolov8s.hef",   
+        labels_path="resources/coco_labels.txt", 
+        #class_filter=[0],                      # keep only 'person' class
+    )
+else:
+    model = Detector("yolov8n.pt")
+
 app = FastAPI()
 
 person_follow_task: asyncio.Task | None = None

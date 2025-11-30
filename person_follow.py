@@ -195,11 +195,11 @@ def adaptive_turn_calibration(last_cmd, small):
 # ==========================
 # MAIN FOLLOW LOOP
 # ==========================
-async def person_follow_loop(get_frame, send_motor_command, model: YOLO, stop_event: asyncio.Event):
+async def person_follow_loop(get_frame, send_motor_command, model, stop_event: asyncio.Event):
     """
     get_frame:          () -> np.ndarray (BGR frame)
     send_motor_command: (cmd: str, speed: int) -> awaitable
-    model:              YOLO instance
+    model:              YOLO-like instance (Ultralytics or Hailo wrapper)
     stop_event:         asyncio.Event to stop loop
     """
     loop_start = time.perf_counter()
