@@ -6,12 +6,12 @@
 config = {
     "CONF_THRESHOLD": 0.50,     # YOLO person confidence
     "IMG_SIZE": 320,            # YOLO image size (higher = better accuracy, slower)
-    "CENTER_DEADZONE": 0.25,    # ±15% horizontally is “centered”
-    "TURN_SPEED": 30,           # rotation speed (0-100)
+    "CENTER_DEADZONE": 0.21,    # ±15% horizontally is “centered”
+    "TURN_SPEED": 25,           # rotation speed (0-100)
     "FORWARD_SPEED": 70,        # forward speed (0-100)
     "SEARCH_TURN_SPEED": 50,    # speed when searching for a person
     "LOST_FRAMES_LIMIT": 200,    # after N frames with no person -> stop
-    "LOST_FRAMES_GRACE": 20,    # after N frames with no person -> stop
+    "LOST_FRAMES_GRACE": 15,    # after N frames with no person -> stop
     "TRACK_INTERVAL_SEC": 0.15, # delay between control commands
     "MAX_PERSON_AREA": 0.70,    # stop if person covers >50% of image
     "STOP_ON_TOO_CLOSE": True,  # enable stop when too close
