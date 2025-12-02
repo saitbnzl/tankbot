@@ -10,7 +10,7 @@ import cv2
 import threading
 import time
 import json
-
+from hailo_runner import _run_hailo
 
 from person_follow import person_follow_loop
 from person_follow_config import get_config, update_config
@@ -100,8 +100,18 @@ def get_latest_frame():
 
 
 def annotate_frame(frame):
-    results = model(frame, imgsz=320, verbose=False)
-    return results[0].plot()
+    # Hailo: run inference and draw boxes yourself
+    detections = _run_hailo(frame)
+    for det in detections:
+        if det["class_name"] != "person":
+            continue
+        x1, y1, x2, y2 = map(int, det["bbox"])
+        conf = det["confidence"]
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(frame, f"{det['class_name']} {conf:.2f}",
+                    (x1, y1 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+    return frame
 
 # ============================================================
 #         SHARED MOTOR CONTROL FUNCTION (IMPORTANT)
@@ -140,20 +150,12 @@ class DriveRequest(BaseModel):
 @app.get("/detect")
 def detect():
     frame = get_latest_frame()
-    results = model(frame, imgsz=320, verbose=False)[0]
+    detections = _run_hailo(frame)
 
-    detections = []
-    if results.boxes is not None:
-        for box, cid, conf in zip(results.boxes.xyxy, results.boxes.cls, results.boxes.conf):
-            x1, y1, x2, y2 = map(float, box)
-            detections.append({
-                "class_id": int(cid),
-                "class_name": model.names[int(cid)],
-                "confidence": float(conf),
-                "bbox": [x1, y1, x2, y2]
-            })
-
-    return {"count": len(detections), "detections": detections}
+    return {
+        "count": len(detections),
+        "detections": detections,
+    }
 
 
 @app.post("/drive")
