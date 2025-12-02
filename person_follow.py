@@ -5,7 +5,6 @@ import time
 import traceback
 
 import cv2
-from hailo_yolo_adapter import _run_hailo
 import numpy as np
 from tankbot_brain_server import USE_HAILO
 from ultralytics import YOLO
@@ -260,10 +259,10 @@ async def person_follow_loop(get_frame, send_motor_command, model, stop_event: a
             adaptive_turn_calibration(last_cmd, small)
 
             # YOLO tahmini (konfigüre edilebilir IMG_SIZE ile)
-            if USE_HAILO:
-                results = _run_hailo(frame)[0]
-            else:
-                results = model(frame, imgsz=IMG_SIZE, verbose=False)[0]
+            #if USE_HAILO:
+            #    results = _run_hailo(frame)[0]
+            #else:
+            results = model(frame, imgsz=IMG_SIZE, verbose=False)[0]
 
             best, max_person_ratio = pick_main_person(results, frame_area, CONF_THRESHOLD)
 
