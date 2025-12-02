@@ -11,7 +11,7 @@
 # After sourcing, your PYTHONPATH will be set for the current terminal session.
 
 # Define virtual environment name
-VENV_NAME="cv"
+VENV_NAME="cv/venv"
 
 # Function to check if the script is being sourced
 is_sourced() {
