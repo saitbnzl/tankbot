@@ -3,6 +3,16 @@
 import cv2
 import numpy as np
 from types import SimpleNamespace
+from pathlib import Path
+from object_detection_utils import preprocess_image, postprocess_detections  # <- adjust names
+from utils import HailoAsyncInference  # <- from Hailo examples
+
+HAILO_MODEL_PATH = Path("/home/saitb/resources/yolov8m.hef")
+HAILO_LABELS_PATH = Path("/home/saitb/resources/coco_labels.txt")
+
+_hailo_infer = None
+_hailo_input_size = (640, 640)  # adjust if your HEF expects different size
+_hailo_labels = None
 
 # If you’ve installed HailoRT’s Python package, imports will look like this:
 # from hailo_platform import (
@@ -16,6 +26,40 @@ from types import SimpleNamespace
 # the actual Hailo inference call is left as a clearly
 # marked TODO block below.
 
+
+def _init_hailo():
+    global _hailo_infer, _hailo_labels
+
+    if _hailo_infer is not None:
+        return
+
+    if not HAILO_MODEL_PATH.exists():
+        raise RuntimeError(f"Hailo model not found at {HAILO_MODEL_PATH}")
+
+    if not HAILO_LABELS_PATH.exists():
+        raise RuntimeError(f"coco labels file not found at {HAILO_LABELS_PATH}")
+
+    # This class comes from the Hailo example (utils.py)
+    _hailo_infer = HailoAsyncInference(
+        model_path=str(HAILO_MODEL_PATH),
+        labels_path=str(HAILO_LABELS_PATH),
+        batch_size=1,
+    )
+
+    # if there is a helper to load labels, use that; otherwise read file
+    _hailo_labels = [line.strip() for line in open(HAILO_LABELS_PATH, "r", encoding="utf-8")]
+    print("[HAILO] Initialized with", HAILO_MODEL_PATH)
+
+
+class SimpleBoxes:
+    def __init__(self, xyxy, cls, conf):
+        self.xyxy = xyxy
+        self.cls = cls
+        self.conf = conf
+
+class SimpleResult:
+    def __init__(self, boxes):
+        self.boxes = boxes
 
 class _Boxes:
     """
@@ -201,30 +245,72 @@ class HailoYoloDetector:
 
     # =============== INTERNAL: where Hailo magic happens ===============
 
-    def _run_hailo(self, resized_bgr: np.ndarray) -> list[dict]:
-        """
-        Run a single-frame inference on the Hailo device and return
-        a list of detection dicts:
+def _run_hailo(frame):
+    """
+    frame: BGR numpy array (like you already have)
+    returns: [SimpleResult]  (so caller can do results[0].boxes.xyxy etc.)
+    """
+    _init_hailo()
+    global _hailo_infer
 
-            [
-                {
-                  "x1": float, "y1": float, "x2": float, "y2": float,
-                  "class_id": int, "confidence": float,
-                },
-                ...
-            ]
+    # 1) Convert BGR -> RGB (most Hailo examples expect RGB)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        THIS IS THE ONLY PLACE YOU NEED TO EDIT TO HOOK IN HAILO.
+    # 2) Resize / preprocess
+    # If your object_detection_utils has a preprocess helper, use that instead:
+    #   preprocessed = preprocess_image(rgb, input_size=_hailo_input_size)
+    # Here’s a generic version:
+    resized = cv2.resize(rgb, _hailo_input_size, interpolation=cv2.INTER_LINEAR)
+    preprocessed = np.expand_dims(resized, axis=0)  # batch dimension [1,H,W,C], uint8
 
-        You can follow the official Hailo runtime Python object detection example:
+    # 3) Run inference on Hailo (synchronous)
+    # Look at object_detection.py to see how HailoAsyncInference is used.
+    # Most likely something like:
+    hailo_outputs = _hailo_infer.infer(preprocessed)  # returns list for each image in batch
+    # For batch_size=1:
+    hailo_output_for_frame = hailo_outputs[0]
 
-        - Hailo-Application-Code-Examples/runtime/python/object_detection
-          (see README and object_detection.py there)
+    # 4) Postprocess -> bounding boxes
+    # In Hailo example this is usually done by a helper.
+    # In object_detection.py, search for something like: "postprocess_output" or "postprocess_detection_results".
+    # I’ll assume you have a function that does: raw_tensor-> list of {bbox, class_id, score, label}
+    detections = postprocess_detections(
+        hailo_output_for_frame,
+        input_shape=_hailo_input_size,
+        num_classes=80,
+        confidence_threshold=0.3,
+        label_dictionary=_hailo_labels,
+    )
 
-        and map its outputs into the format above.
-        """
-        # ====== TODO: replace this stub with real Hailo inference ======
-        # For now, return empty detections so nothing breaks structurally.
-        # Once you have your Hailo pipeline working, parse its output
-        # tensors here and create the list of dicts described above.
-        return []
+    # detections is expected to be a list of dicts:
+    # {
+    #   "bbox": [x1, y1, x2, y2],
+    #   "class_id": int,
+    #   "score": float,
+    #   "label": str
+    # }
+
+    xyxy_list = []
+    cls_list = []
+    conf_list = []
+
+    for det in detections:
+        x1, y1, x2, y2 = det["bbox"]
+        xyxy_list.append([x1, y1, x2, y2])
+        cls_list.append(det["class_id"])
+        conf_list.append(det["score"])
+
+    if not xyxy_list:
+        boxes = SimpleBoxes(
+            xyxy=np.empty((0, 4), dtype=np.float32),
+            cls=np.empty((0,), dtype=np.int64),
+            conf=np.empty((0,), dtype=np.float32),
+        )
+    else:
+        boxes = SimpleBoxes(
+            xyxy=np.array(xyxy_list, dtype=np.float32),
+            cls=np.array(cls_list, dtype=np.int64),
+            conf=np.array(conf_list, dtype=np.float32),
+        )
+
+    return [SimpleResult(boxes)]

@@ -103,7 +103,6 @@ def annotate_frame(frame):
     results = model(frame, imgsz=320, verbose=False)
     return results[0].plot()
 
-
 # ============================================================
 #         SHARED MOTOR CONTROL FUNCTION (IMPORTANT)
 # ============================================================
