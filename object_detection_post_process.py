@@ -117,36 +117,42 @@ def extract_detections(image: np.ndarray, detections: list, config_data) -> dict
     detections = np.asarray(detections, dtype=object)
 
     for class_id, detection in enumerate(detections):
-        # detection tipini normalize et
-        detection = np.asarray(detection)
-
-        # Hiç detection yoksa geç
+        detection = np.asarray(detection, dtype=object)
         if detection.size == 0:
             continue
 
-        # Eğer 1D ise tek vektör gibi gelmiş olabilir → (1, N)'e çevir
+        # 1D ise tek satır, 2D ise birden fazla; ikisi için de iterate edelim
         if detection.ndim == 1:
             detection = detection.reshape(1, -1)
 
         for det in detection:
-            det = np.asarray(det).ravel()
+            det = np.asarray(det, dtype=float).ravel()
 
             # En az [x1, y1, x2, y2, score] olmalı
             if det.size < 5:
-                # Debug istersen aç:
-                # print(f"[PP] Skipping short det (size={det.size}):", det)
+                # print(f"[PP] skipping short det size={det.size}: {det}")
                 continue
 
-            bbox, score = det[:4], float(det[4])
-            if score >= score_threshold:
-                denorm_bbox = denormalize_and_rm_pad(
-                    list(bbox),
-                    size,
-                    padding_length,
-                    img_height,
-                    img_width,
-                )
-                all_detections.append((score, class_id, denorm_bbox))
+            bbox = det[:4]
+
+            # Geri kalan kısmı skor gibi düşün; 1+ eleman olabilir
+            score_vec = det[4:]
+            if score_vec.size == 0:
+                continue
+            score = float(score_vec[0])
+
+            if score < score_threshold:
+                continue
+
+            denorm_bbox = denormalize_and_rm_pad(
+                list(bbox),
+                size,
+                padding_length,
+                img_height,
+                img_width,
+            )
+            all_detections.append((score, class_id, denorm_bbox))
+
 
     # score'a göre sırala (desc)
     all_detections.sort(reverse=True, key=lambda x: x[0])
