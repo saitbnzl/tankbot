@@ -24,7 +24,7 @@ USE_HAILO = True  # set False to go back to plain Ultralytics on CPU
 
 if USE_HAILO:
     # NEW: Hailo-backed YOLO wrapper which mimics Ultralytics API
-    from hailo_yolo_adapter import HailoYoloDetector as Detector
+    from detector import Detector
 else:
     from ultralytics import YOLO as Detector
 
