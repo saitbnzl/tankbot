@@ -15,12 +15,11 @@ from hailo_platform import (
     OutputVStreamParams,
 )
 
-# Use our own post-processing helper directly
-from object_detection_post_process import inference_result_handler
+from object_detection_post_process import extract_detections
 
-# ---------- CONFIG ----------
-HEF_PATH = "yolov8m.hef"        # or whatever you downloaded
-LABELS_PATH = "coco_labels.txt" # same labels file you used before
+# ---------- CONFIG (can be overridden via configure_model) ----------
+HEF_PATH = "resources/yolov8s.hef"
+LABELS_PATH = "resources/coco_labels.txt"
 
 # ---------- GLOBAL STATE ----------
 _init_lock = threading.Lock()
@@ -32,6 +31,22 @@ _input_vstreams = None
 _output_vstreams = None
 _input_shape = None    # (H, W, C)
 _labels = []
+
+
+def configure_model(hef_path: str | None = None, labels_path: str | None = None):
+    """
+    Allows external code (Detector) to override HEF and labels paths.
+    Resets the initialized state so next _run_hailo() will re-init with new paths.
+    """
+    global HEF_PATH, LABELS_PATH, _hailo_inited
+
+    if hef_path:
+        HEF_PATH = hef_path
+    if labels_path:
+        LABELS_PATH = labels_path
+
+    # Force re-init next time
+    _hailo_inited = False
 
 
 def _load_labels(path: str):
@@ -71,12 +86,8 @@ def _init_hailo():
         in_params = InputVStreamParams()
         out_params = OutputVStreamParams()
 
-        # ⚠️ NOTE:
-        # The lines below still need to follow the new Hailo API exactly.
-        # Check the official example for the correct way to create InputVStreams / OutputVStreams.
-        # For now we keep the structure; just be aware you must adapt these to:
-        #   InputVStreams.create(...), OutputVStreams.create(...)
-        # or similar, according to your SDK version.
+        # ⚠️ If your Hailo example uses a different constructor (e.g. .create()),
+        # adapt these lines to match it.
         _input_vstreams = InputVStreams(in_infos, _network_group, in_params)
         _output_vstreams = OutputVStreams(out_infos, _network_group, out_params)
 
@@ -95,34 +106,32 @@ def _preprocess(frame_bgr: np.ndarray) -> np.ndarray:
     Convert ESP32 frame (BGR uint8, HxWx3) into what the HEF expects.
     """
     H, W, C = _input_shape
-    # Resize to network size
     resized = cv2.resize(frame_bgr, (W, H), interpolation=cv2.INTER_LINEAR)
-
-    # Hailo examples usually use RGB uint8, NHWC
     rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-
-    # If the example normalizes / divides by 255 or subtracts mean,
-    # do the SAME here. The simplest case is raw uint8:
     tensor = rgb.astype(np.uint8)
-
     return tensor
 
 
-def _run_hailo(frame_bgr: np.ndarray, config_data: dict, tracker=None):
+def _run_hailo(frame_bgr: np.ndarray, config_data: dict, class_filter=None):
     """
-    Main entry point you will call from tankbot_brain_server.py
+    Main entry point for Hailo inference.
 
-    frame_bgr: numpy, HxWx3, BGR
-    config_data: JSON-like dict with post-processing config
-    tracker: optional BYTETracker instance
+    frame_bgr:   numpy, HxWx3, BGR
+    config_data: JSON-like dict with post-processing config (for extract_detections)
+    class_filter: optional list of class_ids to keep (e.g. [0] for 'person')
 
-    returns: annotated frame (same shape as frame_bgr), with detections drawn.
+    returns: list of detection dicts:
+        {
+          "class_id": int,
+          "class_name": str,
+          "confidence": float,
+          "bbox": [x1, y1, x2, y2],
+        }
     """
     _init_hailo()
 
     inp = _preprocess(frame_bgr)
 
-    # Make sure shape matches input vstream; usually (H,W,C) or (1,H,W,C)
     if inp.ndim == 3:
         inp_batch = np.expand_dims(inp, 0)
     else:
@@ -130,22 +139,42 @@ def _run_hailo(frame_bgr: np.ndarray, config_data: dict, tracker=None):
 
     # Run inference
     with _input_vstreams, _output_vstreams:
-        # Write input (adapt this line to your vstream API if needed)
+        # write input to first input vstream
         list(_input_vstreams.values())[0].write(inp_batch)
 
-        # Read outputs into a list or dict, depending on how your HEF is structured
+        # read outputs from all output vstreams
         raw_outputs = []
         for _, vs in _output_vstreams.items():
             raw_outputs.append(vs.read())
 
-    # Use your custom post-process + drawing logic directly
-    # inference_result_handler(original_frame, infer_results, labels, config_data, tracker=None)
-    frame_out = inference_result_handler(
-        original_frame=frame_bgr.copy(),
-        infer_results=raw_outputs,
-        labels=_labels,
-        config_data=config_data,
-        tracker=tracker,
-    )
+    # Post-process: turn raw Hailo outputs into detection dict
+    det_dict = extract_detections(frame_bgr, raw_outputs, config_data)
 
-    return frame_out
+    boxes = det_dict["detection_boxes"]
+    classes = det_dict["detection_classes"]
+    scores = det_dict["detection_scores"]
+    num_detections = det_dict["num_detections"]
+
+    results = []
+    for i in range(num_detections):
+        cid = int(classes[i])
+        if class_filter and cid not in class_filter:
+            continue
+
+        x1, y1, x2, y2 = boxes[i]
+        score = float(scores[i])
+
+        class_name = (
+            _labels[cid] if 0 <= cid < len(_labels) else str(cid)
+        )
+
+        results.append(
+            {
+                "class_id": cid,
+                "class_name": class_name,
+                "confidence": score,
+                "bbox": [float(x1), float(y1), float(x2), float(y2)],
+            }
+        )
+
+    return results

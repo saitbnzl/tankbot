@@ -42,14 +42,11 @@ person_follow_stop_event: threading.Event | None = None
 VIDEO_URL = "http://192.168.1.50:81/stream"
 WS_URL    = "ws://tankbot.local:81"
 
-# NEW: init model via Detector, but keep the same name "model"
 if USE_HAILO:
-    # You’ll point these to your compiled HEF + labels
-    # (person-only HEF strongly recommended for your use case)
     model = Detector(
-        hef_path="resources/yolov8s.hef",   
-        labels_path="resources/coco_labels.txt", 
-        #class_filter=[0],                      # keep only 'person' class
+        hef_path="resources/yolov8s.hef",
+        labels_path="resources/coco_labels.txt",
+        # class_filter=[0],
     )
 else:
     model = Detector("yolov8n.pt")
