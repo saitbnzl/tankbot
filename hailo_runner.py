@@ -76,29 +76,36 @@ def _init_hailo():
 
         # 2) Open device and configure
         _vdevice = VDevice()
-        configure_params = hef.create_configure_params(_vdevice)
+
+        # NEW: create_configure_params belongs to VDevice, not HEF
+        configure_params = _vdevice.create_configure_params(hef)
         _network_group = _vdevice.configure(hef, configure_params)
 
-        # 3) Create vstreams
-        in_infos = hef.get_input_vstream_infos()
-        out_infos = hef.get_output_vstream_infos()
+        # 3) Create vstreams using HEF helpers
+        input_vstream_infos = hef.get_input_vstream_infos()
+        output_vstream_infos = hef.get_output_vstream_infos()
 
-        in_params = InputVStreamParams()
-        out_params = OutputVStreamParams()
+        # These helpers exist in recent HailoRT; they build the params for you
+        input_vstream_params = hef.create_input_vstream_params(_network_group)
+        output_vstream_params = hef.create_output_vstream_params(_network_group)
 
-        # ⚠️ If your Hailo example uses a different constructor (e.g. .create()),
-        # adapt these lines to match it.
-        _input_vstreams = InputVStreams(in_infos, _network_group, in_params)
-        _output_vstreams = OutputVStreams(out_infos, _network_group, out_params)
+        # NEW: vstreams are created from vdevice + params, not from infos
+        _input_vstreams = InputVStreams(_vdevice, input_vstream_params)
+        _output_vstreams = OutputVStreams(_vdevice, output_vstream_params)
 
         # 4) Infer input tensor shape (assuming single input, NHWC)
-        in_info = list(in_infos.values())[0] if isinstance(in_infos, dict) else in_infos[0]
-        _input_shape = (in_info.height, in_info.width, in_info.channels)
+        first_in_info = (
+            list(input_vstream_infos.values())[0]
+            if isinstance(input_vstream_infos, dict)
+            else input_vstream_infos[0]
+        )
+        _input_shape = (first_in_info.height, first_in_info.width, first_in_info.channels)
 
         # 5) Load labels
         _labels = _load_labels(LABELS_PATH)
 
         _hailo_inited = True
+
 
 
 def _preprocess(frame_bgr: np.ndarray) -> np.ndarray:
