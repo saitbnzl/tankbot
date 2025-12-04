@@ -14,6 +14,10 @@ from hailo_runner import _run_hailo
 
 from person_follow import person_follow_loop
 from person_follow_config import get_config, update_config
+import json
+
+with open("resources/yolo_conf.json") as f:
+    config_data = json.load(f)
 
 person_follow_thread = None
 person_follow_stop_event: threading.Event | None = None

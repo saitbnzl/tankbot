@@ -5,6 +5,7 @@ import time
 import traceback
 
 import cv2
+from hailo_runner import _run_hailo
 import numpy as np
 from ultralytics import YOLO
 
@@ -36,34 +37,41 @@ FAST_YAW         = 0.010   # bunun üstü: "fazla hızlı"
 # ==========================
 # PERSON SELECTION
 # ==========================
-def pick_main_person(results, frame_area: float, conf_threshold: float):
+def pick_main_person(detections, frame_area: float, conf_threshold: float):
     """
     - En küçük alanlı (muhtemelen en uzaktaki) kişiyi seçer.
     - Aynı zamanda frame içindeki en büyük kişi oranını döner (BLOCKED tespiti için).
       Dönüş:
         best_person: (cx, cy, w, h, conf) veya None
         max_ratio:   0.0..1.0 arası, herhangi bir person bounding box'ının frame oranı
+
+    detections: list of dict:
+        {
+          "class_id": int,
+          "class_name": str,
+          "confidence": float,
+          "bbox": [x1, y1, x2, y2],
+        }
     """
-    boxes = results.boxes
-    if not boxes:
+    if not detections:
         return None, 0.0
 
     best = None
     best_area = None  # smallest area
     max_ratio = 0.0
 
-    for box, cid, conf in zip(boxes.xyxy, boxes.cls, boxes.conf):
-        cid = int(cid)
-        conf = float(conf)
+    for det in detections:
+        cid = int(det["class_id"])
+        conf = float(det["confidence"])
 
-        # sadece "person" class
+        # sadece "person" class (COCO'da 0)
         if cid != 0:
             continue
 
         if conf < conf_threshold:
             continue
 
-        x1, y1, x2, y2 = map(float, box)
+        x1, y1, x2, y2 = map(float, det["bbox"])
         w, h = x2 - x1, y2 - y1
         area = w * h
         ratio = area / frame_area if frame_area > 0 else 0.0
@@ -259,13 +267,16 @@ async def person_follow_loop(get_frame, send_motor_command, model, stop_event: a
             # Bir önceki komut bir dönüş komutu ise, bu frame ile kalibrasyon yap
             adaptive_turn_calibration(last_cmd, small)
 
-            # YOLO tahmini (konfigüre edilebilir IMG_SIZE ile)
-            #if USE_HAILO:
-            #    results = _run_hailo(frame)[0]
-            #else:
-            results = model(frame, imgsz=IMG_SIZE, verbose=False)[0]
+            # DETECTION (Hailo veya YOLO – unified Detector)
+            detections = model(frame, imgsz=IMG_SIZE, verbose=False)
 
-            best, max_person_ratio = pick_main_person(results, frame_area, CONF_THRESHOLD)
+            best, max_person_ratio = pick_main_person(
+                detections,
+                frame_area,
+                CONF_THRESHOLD,
+            )
+
+
 
 
             # ==========================

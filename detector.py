@@ -1,28 +1,11 @@
 # detector.py
 
 import numpy as np
-import cv2
-
 from ultralytics import YOLO
 from hailo_runner import _run_hailo, configure_model
 
 
 class Detector:
-    """
-    Unified detector abstraction.
-
-    Hailo mode:
-        Detector(
-            hef_path="resources/yolov8s.hef",
-            labels_path="resources/coco_labels.txt",
-            config_data=...,          # JSON dict for post-process
-            class_filter=[0],         # optional
-        )
-
-    PyTorch YOLO mode:
-        Detector("yolov8n.pt")
-    """
-
     def __init__(
         self,
         pt_path: str | None = None,
@@ -37,20 +20,19 @@ class Detector:
         self.config_data = config_data
 
         if self.use_hailo:
-            # Configure Hailo model paths in hailo_runner
-            configure_model(hef_path=hef_path, labels_path=labels_path)
             self.mode = "hailo"
+            configure_model(hef_path=hef_path, labels_path=labels_path)
         else:
             self.mode = "pytorch"
             if pt_path is None:
                 raise ValueError("pt_path is required when use_hailo=False")
             self.model = YOLO(pt_path)
 
-    def __call__(self, frame_bgr: np.ndarray):
+    def __call__(self, frame_bgr, imgsz=None, verbose=False):
         """
-        Call like: detections = model(frame_bgr)
+        detections = model(frame_bgr, imgsz=..., verbose=...)
 
-        Returns list of dicts:
+        Her iki modda da aynı yapıda döner:
             {
               "class_id": int,
               "class_name": str,
@@ -61,14 +43,15 @@ class Detector:
         if self.mode == "hailo":
             if self.config_data is None:
                 raise ValueError("config_data must be provided for Hailo mode")
-            return _run_hailo(
+            dets = _run_hailo(
                 frame_bgr,
                 config_data=self.config_data,
                 class_filter=self.class_filter,
             )
+            return dets
 
         # PyTorch YOLO path
-        results = self.model(frame_bgr)[0]
+        results = self.model(frame_bgr, imgsz=imgsz, verbose=verbose)[0]
 
         dets = []
         for box in results.boxes:
@@ -85,5 +68,4 @@ class Detector:
                     "bbox": [float(x1), float(y1), float(x2), float(y2)],
                 }
             )
-
         return dets
