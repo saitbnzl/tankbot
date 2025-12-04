@@ -6,14 +6,16 @@ import cv2
 
 import hailo
 from hailo_platform import (
-    VDevice,
     HEF,
+    VDevice,
     ConfigureParams,
-    InputVStreams,
-    OutputVStreams,
     InputVStreamParams,
     OutputVStreamParams,
+    InferVStreams,
+    HailoStreamInterface,
+    FormatType,
 )
+
 
 from object_detection_post_process import extract_detections
 
@@ -61,8 +63,9 @@ def _load_labels(path: str):
 
 
 def _init_hailo():
-    global _hailo_inited, _vdevice, _network_group
-    global _input_vstreams, _output_vstreams, _input_shape, _labels
+    global _hailo_inited, _vdevice, _network_group, _network_group_params
+    global _input_vstreams_params, _output_vstreams_params
+    global _input_vstream_info, _output_vstream_info, _input_shape, _labels
 
     if _hailo_inited:
         return
@@ -74,34 +77,40 @@ def _init_hailo():
         # 1) Load HEF
         hef = HEF(HEF_PATH)
 
-        # 2) Open device and configure
+        # 2) Create virtual device (will talk to /dev/hailo0 via PCIe)
         _vdevice = VDevice()
 
-        # NEW: create_configure_params belongs to VDevice, not HEF
-        configure_params = _vdevice.create_configure_params(hef)
-        _network_group = _vdevice.configure(hef, configure_params)
-
-        # 3) Create vstreams using HEF helpers
-        input_vstream_infos = hef.get_input_vstream_infos()
-        output_vstream_infos = hef.get_output_vstream_infos()
-
-        # These helpers exist in recent HailoRT; they build the params for you
-        input_vstream_params = hef.create_input_vstream_params(_network_group)
-        output_vstream_params = hef.create_output_vstream_params(_network_group)
-
-        # NEW: vstreams are created from vdevice + params, not from infos
-        _input_vstreams = InputVStreams(_vdevice, input_vstream_params)
-        _output_vstreams = OutputVStreams(_vdevice, output_vstream_params)
-
-        # 4) Infer input tensor shape (assuming single input, NHWC)
-        first_in_info = (
-            list(input_vstream_infos.values())[0]
-            if isinstance(input_vstream_infos, dict)
-            else input_vstream_infos[0]
+        # 3) Build configure params from HEF
+        configure_params = ConfigureParams.create_from_hef(
+            hef=hef,
+            interface=HailoStreamInterface.PCIe,  # Pi AI Kit / Hailo-8 over PCIe
         )
-        _input_shape = (first_in_info.height, first_in_info.width, first_in_info.channels)
 
-        # 5) Load labels
+        # 4) Configure network group(s)
+        network_groups = _vdevice.configure(hef, configure_params)
+        _network_group = network_groups[0]
+        _network_group_params = _network_group.create_params()
+
+        # 5) Create vstream params
+        _input_vstreams_params = InputVStreamParams.make(
+            _network_group,
+            quantized=False,
+            format_type=FormatType.FLOAT32,
+        )
+        _output_vstreams_params = OutputVStreamParams.make(
+            _network_group,
+            # usually quantized=True + UINT8, but this depends on your HEF;
+            # adjust if you know you want FLOAT32 instead.
+            quantized=True,
+            format_type=FormatType.UINT8,
+        )
+
+        # 6) Cache stream infos and input shape
+        _input_vstream_info = hef.get_input_vstream_infos()[0]
+        _output_vstream_info = hef.get_output_vstream_infos()[0]
+        _input_shape = _input_vstream_info.shape  # (H, W, C)
+
+        # 7) Load labels
         _labels = _load_labels(LABELS_PATH)
 
         _hailo_inited = True
