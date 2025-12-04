@@ -88,6 +88,38 @@ def denormalize_and_rm_pad(box: list, size: int, padding_length: int, input_heig
     return box
 
 
+def _to_flat_float_vector(det):
+    """
+    Try to convert an arbitrary nested detection structure into a flat 1D float array.
+    Returns None if it can't be sensibly converted.
+    """
+    # First try the simple path
+    try:
+        arr = np.asarray(det, dtype=float)
+        if arr.ndim == 0:
+            return None
+        if arr.ndim > 1:
+            arr = arr.ravel()
+        return arr
+    except Exception:
+        pass
+
+    # Fallback: manually walk and pick only scalar-like items
+    flat = []
+    try:
+        for x in det:
+            try:
+                flat.append(float(x))
+            except Exception:
+                # skip non-scalar entries
+                continue
+        if not flat:
+            return None
+        return np.asarray(flat, dtype=float)
+    except Exception:
+        return None
+
+
 def extract_detections(image: np.ndarray, detections: list, config_data) -> dict:
     """
     Extract detections from the input data.
@@ -113,30 +145,32 @@ def extract_detections(image: np.ndarray, detections: list, config_data) -> dict
 
     all_detections = []
 
-    # Hailo'dan gelen "detections" bazen np.ndarray, bazen list olabilir.
+    # Normalize top-level container
     detections = np.asarray(detections, dtype=object)
 
     for class_id, detection in enumerate(detections):
         detection = np.asarray(detection, dtype=object)
+
         if detection.size == 0:
             continue
 
-        # 1D ise tek satır, 2D ise birden fazla; ikisi için de iterate edelim
+        # 1D ise tek satır, 2D ise çoklu; ikisini de aynı şekilde gez
         if detection.ndim == 1:
             detection = detection.reshape(1, -1)
 
         for det in detection:
-            det = np.asarray(det, dtype=float).ravel()
-
-            # En az [x1, y1, x2, y2, score] olmalı
-            if det.size < 5:
-                # print(f"[PP] skipping short det size={det.size}: {det}")
+            arr = _to_flat_float_vector(det)
+            if arr is None:
+                # Debug istersen aç:
+                # print("[PP] skipping non-numeric det:", det)
                 continue
 
-            bbox = det[:4]
+            if arr.size < 5:
+                # print(f"[PP] skipping short det size={arr.size}: {arr}")
+                continue
 
-            # Geri kalan kısmı skor gibi düşün; 1+ eleman olabilir
-            score_vec = det[4:]
+            bbox = arr[:4]
+            score_vec = arr[4:]
             if score_vec.size == 0:
                 continue
             score = float(score_vec[0])
@@ -153,11 +187,8 @@ def extract_detections(image: np.ndarray, detections: list, config_data) -> dict
             )
             all_detections.append((score, class_id, denorm_bbox))
 
-
     # score'a göre sırala (desc)
     all_detections.sort(reverse=True, key=lambda x: x[0])
-
-    # en fazla max_boxes kadar al
     top_detections = all_detections[:max_boxes]
 
     if top_detections:
@@ -171,6 +202,7 @@ def extract_detections(image: np.ndarray, detections: list, config_data) -> dict
         "detection_scores": list(scores),
         "num_detections": len(top_detections),
     }
+
 
 
 def draw_detections(detections: dict, img_out: np.ndarray, labels, tracker=None):
