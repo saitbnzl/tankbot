@@ -94,36 +94,53 @@ def extract_detections(image: np.ndarray, detections: list, config_data) -> dict
 
     Args:
         image (np.ndarray): Image to draw on.
-        detections (list): Raw detections from the model.
+        detections (list or np.ndarray): Raw detections from the model.
         config_data (Dict): Loaded JSON config containing post-processing metadata.
 
     Returns:
-        dict: Filtered detection results containing 'detection_boxes', 'detection_classes', 'detection_scores', and 'num_detections'.
+        dict: Filtered detection results containing 'detection_boxes',
+              'detection_classes', 'detection_scores', and 'num_detections'.
     """
 
     visualization_params = config_data["visualization_params"]
     score_threshold = visualization_params.get("score_thres", 0.5)
     max_boxes = visualization_params.get("max_boxes_to_draw", 50)
 
-
-    #values used for scaling coords and removing padding
+    # values used for scaling coords and removing padding
     img_height, img_width = image.shape[:2]
     size = max(img_height, img_width)
     padding_length = int(abs(img_height - img_width) / 2)
 
     all_detections = []
 
+    # Hailo'dan gelen "detections" bazen np.ndarray, bazen list olabilir.
+    detections = np.asarray(detections, dtype=object)
+
     for class_id, detection in enumerate(detections):
+        # detection tipini normalize et
+        detection = np.asarray(detection)
+
+        # Hiç detection yoksa geç
+        if detection.size == 0:
+            continue
+
+        # Eğer 1D ise tek vektör gibi gelmiş olabilir → (1, N)'e çevir
+        if detection.ndim == 1:
+            detection = detection.reshape(1, -1)
+
         for det in detection:
-            # Boş veya beklenenden kısa detection'ları atla
-            det = np.asarray(det)
-            if det.size < 6:
+            det = np.asarray(det).ravel()
+
+            # En az [x1, y1, x2, y2, score] olmalı
+            if det.size < 5:
+                # Debug istersen aç:
+                # print(f"[PP] Skipping short det (size={det.size}):", det)
                 continue
 
-            bbox, score = det[:4], det[4]
+            bbox, score = det[:4], float(det[4])
             if score >= score_threshold:
                 denorm_bbox = denormalize_and_rm_pad(
-                    list(bbox),  # list'e çeviriyoruz ki inplace modifiye edilebilsin
+                    list(bbox),
                     size,
                     padding_length,
                     img_height,
@@ -131,20 +148,22 @@ def extract_detections(image: np.ndarray, detections: list, config_data) -> dict
                 )
                 all_detections.append((score, class_id, denorm_bbox))
 
-
-    #sort all detections by score descending
+    # score'a göre sırala (desc)
     all_detections.sort(reverse=True, key=lambda x: x[0])
 
-    #take top max_boxes
+    # en fazla max_boxes kadar al
     top_detections = all_detections[:max_boxes]
 
-    scores, class_ids, boxes = zip(*top_detections) if top_detections else ([], [], [])
+    if top_detections:
+        scores, class_ids, boxes = zip(*top_detections)
+    else:
+        scores, class_ids, boxes = [], [], []
 
     return {
-        'detection_boxes': list(boxes),
-        'detection_classes': list(class_ids),
-        'detection_scores': list(scores),
-        'num_detections': len(top_detections)
+        "detection_boxes": list(boxes),
+        "detection_classes": list(class_ids),
+        "detection_scores": list(scores),
+        "num_detections": len(top_detections),
     }
 
 
