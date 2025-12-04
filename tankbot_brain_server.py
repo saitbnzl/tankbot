@@ -102,18 +102,42 @@ def get_latest_frame():
 
 
 def annotate_frame(frame):
-    # Hailo: run inference and draw boxes yourself
-    detections = _run_hailo(frame)
+    """
+    Returns an annotated frame for streaming.
+    Uses unified Detector (Hailo or YOLO) which returns a list of detections:
+      {
+        "class_id": int,
+        "class_name": str,
+        "confidence": float,
+        "bbox": [x1, y1, x2, y2],
+      }
+    """
+    # İstersen IMG_SIZE config'ten gelebilir; şimdilik sabit varsayalım:
+    IMG_SIZE = 320
+
+    detections = model(frame, imgsz=IMG_SIZE, verbose=False)
+
+    annotated = frame.copy()
     for det in detections:
-        if det["class_name"] != "person":
+        cid = int(det["class_id"])
+        # sadece person çizmek istersen:
+        if cid != 0:
             continue
-        x1, y1, x2, y2 = map(int, det["bbox"])
+
+        x1, y1, x2, y2 = det["bbox"]
         conf = det["confidence"]
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(frame, f"{det['class_name']} {conf:.2f}",
-                    (x1, y1 - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-    return frame
+        label = det["class_name"]
+
+        x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        txt = f"{label} {conf:.2f}"
+        cv2.putText(annotated, txt, (x1, max(0, y1 - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+        cv2.putText(annotated, txt, (x1, max(0, y1 - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+
+    return annotated
+
 
 # ============================================================
 #         SHARED MOTOR CONTROL FUNCTION (IMPORTANT)
@@ -182,7 +206,7 @@ def video():
     def generator():
         while True:
             frame = get_latest_frame()
-            annotated = frame  # Optionally: annotate_frame(frame)
+            annotated = annotate_frame(frame)
             ok, jpg = cv2.imencode(".jpg", annotated)
             if not ok:
                 continue
