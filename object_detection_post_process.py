@@ -4,23 +4,12 @@ from common.toolbox import id_to_color
 
 
 def inference_result_handler(original_frame, infer_results, labels, config_data, tracker=None):
-    """
-    Processes inference results and draw detections (with optional tracking).
+    # if infer_results is [output] wrap:
+    model_output = infer_results[0]  # <-- unwrap the extra level
 
-    Args:
-        infer_results (list): Raw output from the model.
-        original_frame (np.ndarray): Original image frame.
-        labels (list): List of class labels.
-        enable_tracking (bool): Whether tracking is enabled.
-        tracker (BYTETracker, optional): ByteTrack tracker instance.
-
-    Returns:
-        np.ndarray: Frame with detections or tracks drawn.
-    """
-    detections = extract_detections(original_frame, infer_results, config_data)  #should return dict with boxes, classes, scores
+    detections = extract_detections(original_frame, model_output, config_data)
     frame_with_detections = draw_detections(detections, original_frame, labels, tracker=tracker)
     return frame_with_detections
-
 
 def draw_detection(image: np.ndarray, box: list, labels: list, score: float, color: tuple, track=False):
     """
@@ -248,13 +237,21 @@ def draw_detections(detections: dict, img_out: np.ndarray, labels, tracker=None)
             x1, y1, x2, y2 = track.tlbr  #bounding box (top-left, bottom-right)
             xmin, ymin, xmax, ymax = map(int, [x1, y1, x2, y2])
             best_idx = find_best_matching_detection_index(track.tlbr, boxes)
-            color = tuple(id_to_color(classes[best_idx]).tolist())  # color based on class
             if best_idx is None:
-                draw_detection(img_out, [xmin, ymin, xmax, ymax], f"ID {track_id}",
-                               track.score * 100.0, color, track=True)
+                color = (0, 255, 0)  # or some ID-based color
+                draw_detection(img_out, [xmin, ymin, xmax, ymax],
+                            [f"ID {track_id}"],
+                            track.score * 100.0,
+                            color,
+                            track=True)
             else:
-                draw_detection(img_out, [xmin, ymin, xmax, ymax], [labels[classes[best_idx]], f"ID {track_id}"],
-                               track.score * 100.0, color, track=True)
+                color = tuple(id_to_color(classes[best_idx]).tolist())
+                draw_detection(img_out, [xmin, ymin, xmax, ymax],
+                            [labels[classes[best_idx]], f"ID {track_id}"],
+                            track.score * 100.0,
+                            color,
+                            track=True)
+
 
 
 
