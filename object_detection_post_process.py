@@ -115,10 +115,22 @@ def extract_detections(image: np.ndarray, detections: list, config_data) -> dict
 
     for class_id, detection in enumerate(detections):
         for det in detection:
+            # Boş veya beklenenden kısa detection'ları atla
+            det = np.asarray(det)
+            if det.size < 5:
+                continue
+
             bbox, score = det[:4], det[4]
             if score >= score_threshold:
-                denorm_bbox = denormalize_and_rm_pad(bbox, size, padding_length, img_height, img_width)
+                denorm_bbox = denormalize_and_rm_pad(
+                    list(bbox),  # list'e çeviriyoruz ki inplace modifiye edilebilsin
+                    size,
+                    padding_length,
+                    img_height,
+                    img_width,
+                )
                 all_detections.append((score, class_id, denorm_bbox))
+
 
     #sort all detections by score descending
     all_detections.sort(reverse=True, key=lambda x: x[0])
