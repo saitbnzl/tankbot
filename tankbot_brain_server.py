@@ -26,7 +26,7 @@ if USE_HAILO:
     # NEW: Hailo-backed YOLO wrapper which mimics Ultralytics API
     from detector import Detector
 else:
-    from ultralytics import YOLO as Detector
+    from ultralytics import YOLO as YoloDetector
 
 from person_follow import person_follow_loop
 from person_follow_config import get_config, update_config
@@ -47,9 +47,10 @@ if USE_HAILO:
         hef_path="resources/yolov8s.hef",
         labels_path="resources/coco_labels.txt",
         # class_filter=[0],
+        use_hailo=True,
     )
 else:
-    model = Detector("yolov8n.pt")
+    model = YoloDetector("yolov8n.pt")
 
 app = FastAPI()
 
