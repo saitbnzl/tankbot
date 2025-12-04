@@ -185,6 +185,11 @@ def extract_detections(image: np.ndarray, detections: list, config_data) -> dict
     else:
         scores, class_ids, boxes = [], [], []
 
+    if all_detections:
+        print(f"[PP] got {len(all_detections)} raw detections")
+    else:
+        print("[PP] got 0 detections after filtering")
+
     return {
         "detection_boxes": list(boxes),
         "detection_classes": list(class_ids),

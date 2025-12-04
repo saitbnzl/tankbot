@@ -134,13 +134,17 @@ def _init_hailo():
 
 def _preprocess(frame_bgr: np.ndarray) -> np.ndarray:
     """
-    Convert ESP32 frame (BGR uint8, HxWx3) into what the HEF expects.
+    Resize + RGB + float32 (0–1 range).
+    Hailo input vstream FLOAT32 beklediği için buradan float32 döndürüyoruz.
     """
     H, W, C = _input_shape
     resized = cv2.resize(frame_bgr, (W, H), interpolation=cv2.INTER_LINEAR)
     rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    tensor = rgb.astype(np.uint8)
-    return tensor
+
+    rgb = rgb.astype(np.float32)
+    rgb /= 255.0       # HEF’i nasıl derlediğine göre bunu isteğe bağlı tutabilirsin
+
+    return rgb
 
 
 def _run_hailo(frame_bgr: np.ndarray, config_data: dict, class_filter=None):
@@ -151,9 +155,8 @@ def _run_hailo(frame_bgr: np.ndarray, config_data: dict, class_filter=None):
     _init_hailo()
 
     inp = _preprocess(frame_bgr)
-    input_data = {
-        _input_vstream_info.name: np.expand_dims(inp, axis=0)  # add batch axis
-    }
+    input_data = { _input_vstream_info.name: np.expand_dims(inp, axis=0) }
+
 
     # Run inference using InferVStreams (no _input_vstreams/_output_vstreams globals)
     with _network_group.activate(_network_group_params):
