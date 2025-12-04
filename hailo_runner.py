@@ -24,15 +24,24 @@ HEF_PATH = "resources/yolov8s.hef"
 LABELS_PATH = "resources/coco_labels.txt"
 
 # ---------- GLOBAL STATE ----------
+_input_shape = None    # (H, W, C)
+_labels = []
+
 _init_lock = threading.Lock()
 _hailo_inited = False
 
 _vdevice = None
 _network_group = None
-_input_vstreams = None
-_output_vstreams = None
-_input_shape = None    # (H, W, C)
+_network_group_params = None
+
+_input_vstream_info = None
+_output_vstream_info = None
+_input_vstreams_params = None
+_output_vstreams_params = None
+
+_input_shape = None
 _labels = []
+
 
 
 def configure_model(hef_path: str | None = None, labels_path: str | None = None):
@@ -62,10 +71,22 @@ def _load_labels(path: str):
     return labels
 
 
+def _load_labels(path: str):
+    labels = []
+    with open(path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            labels.append(line)
+    return labels
+
+
 def _init_hailo():
     global _hailo_inited, _vdevice, _network_group, _network_group_params
+    global _input_vstream_info, _output_vstream_info
     global _input_vstreams_params, _output_vstreams_params
-    global _input_vstream_info, _output_vstream_info, _input_shape, _labels
+    global _input_shape, _labels
 
     if _hailo_inited:
         return
@@ -77,40 +98,34 @@ def _init_hailo():
         # 1) Load HEF
         hef = HEF(HEF_PATH)
 
-        # 2) Create virtual device (will talk to /dev/hailo0 via PCIe)
+        # 2) Open device
         _vdevice = VDevice()
 
-        # 3) Build configure params from HEF
+        # 3) Configure from HEF (this is the “official” pattern)
         configure_params = ConfigureParams.create_from_hef(
-            hef=hef,
-            interface=HailoStreamInterface.PCIe,  # Pi AI Kit / Hailo-8 over PCIe
+            hef, interface=HailoStreamInterface.PCIe
         )
-
-        # 4) Configure network group(s)
-        network_groups = _vdevice.configure(hef, configure_params)
-        _network_group = network_groups[0]
+        _network_group = _vdevice.configure(hef, configure_params)[0]
         _network_group_params = _network_group.create_params()
 
-        # 5) Create vstream params
-        _input_vstreams_params = InputVStreamParams.make(
-            _network_group,
-            quantized=False,
-            format_type=FormatType.FLOAT32,
-        )
-        _output_vstreams_params = OutputVStreamParams.make(
-            _network_group,
-            # usually quantized=True + UINT8, but this depends on your HEF;
-            # adjust if you know you want FLOAT32 instead.
-            quantized=True,
-            format_type=FormatType.UINT8,
-        )
-
-        # 6) Cache stream infos and input shape
+        # 4) Stream infos
         _input_vstream_info = hef.get_input_vstream_infos()[0]
         _output_vstream_info = hef.get_output_vstream_infos()[0]
         _input_shape = _input_vstream_info.shape  # (H, W, C)
 
-        # 7) Load labels
+        # 5) Create vstream params (dicts keyed by stream name)
+        _input_vstreams_params = InputVStreamParams.make_from_network_group(
+            _network_group,
+            quantized=False,
+            format_type=FormatType.FLOAT32,
+        )
+        _output_vstreams_params = OutputVStreamParams.make_from_network_group(
+            _network_group,
+            quantized=False,   # or True / UINT8 depending on your HEF
+            format_type=FormatType.FLOAT32,
+        )
+
+        # 6) Labels
         _labels = _load_labels(LABELS_PATH)
 
         _hailo_inited = True
@@ -131,48 +146,48 @@ def _preprocess(frame_bgr: np.ndarray) -> np.ndarray:
 def _run_hailo(frame_bgr: np.ndarray, config_data: dict, class_filter=None):
     """
     Main entry point for Hailo inference.
-
-    frame_bgr:   numpy, HxWx3, BGR
-    config_data: JSON-like dict with post-processing config (for extract_detections)
-    class_filter: optional list of class_ids to keep (e.g. [0] for 'person')
-
-    returns: list of detection dicts:
-        {
-          "class_id": int,
-          "class_name": str,
-          "confidence": float,
-          "bbox": [x1, y1, x2, y2],
-        }
+    Returns a list of detection dicts (used by Detector).
     """
     _init_hailo()
 
     inp = _preprocess(frame_bgr)
+    input_data = {
+        _input_vstream_info.name: np.expand_dims(inp, axis=0)  # add batch axis
+    }
 
-    if inp.ndim == 3:
-        inp_batch = np.expand_dims(inp, 0)
-    else:
-        inp_batch = inp
+    # Run inference using InferVStreams (no _input_vstreams/_output_vstreams globals)
+    with _network_group.activate(_network_group_params):
+        with InferVStreams(
+            _network_group,
+            _input_vstreams_params,
+            _output_vstreams_params,
+        ) as infer_pipeline:
+            results = infer_pipeline.infer(input_data)
 
-    # Run inference
-    with _input_vstreams, _output_vstreams:
-        # write input to first input vstream
-        list(_input_vstreams.values())[0].write(inp_batch)
+    raw_output = results[_output_vstream_info.name]
 
-        # read outputs from all output vstreams
-        raw_outputs = []
-        for _, vs in _output_vstreams.items():
-            raw_outputs.append(vs.read())
+    return _postprocess(raw_output, frame_bgr, config_data, class_filter)
 
-    # Post-process: turn raw Hailo outputs into detection dict
-    det_dict = extract_detections(frame_bgr, raw_outputs, config_data)
 
-    boxes = det_dict["detection_boxes"]
-    classes = det_dict["detection_classes"]
-    scores = det_dict["detection_scores"]
-    num_detections = det_dict["num_detections"]
+def _postprocess(raw_outputs, frame_bgr: np.ndarray, config_data: dict, class_filter=None):
+    """
+    Convert raw Hailo outputs into a list of detection dicts:
+        {
+          "class_id": int,
+          "class_name": str,
+          "confidence": float,   # 0..1
+          "bbox": [x1, y1, x2, y2],
+        }
+    """
+    dets = extract_detections(frame_bgr, raw_outputs, config_data)
+
+    boxes = dets["detection_boxes"]
+    classes = dets["detection_classes"]
+    scores = dets["detection_scores"]
+    n = dets["num_detections"]
 
     results = []
-    for i in range(num_detections):
+    for i in range(n):
         cid = int(classes[i])
         if class_filter and cid not in class_filter:
             continue
@@ -180,17 +195,12 @@ def _run_hailo(frame_bgr: np.ndarray, config_data: dict, class_filter=None):
         x1, y1, x2, y2 = boxes[i]
         score = float(scores[i])
 
-        class_name = (
-            _labels[cid] if 0 <= cid < len(_labels) else str(cid)
-        )
-
         results.append(
             {
                 "class_id": cid,
-                "class_name": class_name,
+                "class_name": _labels[cid] if 0 <= cid < len(_labels) else str(cid),
                 "confidence": score,
                 "bbox": [float(x1), float(y1), float(x2), float(y2)],
             }
         )
-
     return results
