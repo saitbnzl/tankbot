@@ -9,8 +9,8 @@ from hailo_platform import (
     VDevice,
     HEF,
     ConfigureParams,
-    InputVStream,
-    OutputVStream,
+    InputVStreams,
+    OutputVStreams,
     InputVStreamParams,
     OutputVStreamParams,
 )
