@@ -6,10 +6,11 @@ import traceback
 
 import cv2
 import numpy as np
-from tankbot_brain_server import USE_HAILO
 from ultralytics import YOLO
 
 from person_follow_config import get_config  # <-- NEW
+
+USE_HAILO = True  # set False to go back to plain Ultralytics on CPU
 
 # possible states: "SCAN", "FOLLOW", "IDLE", "BLOCKED"
 state = "SCAN"
