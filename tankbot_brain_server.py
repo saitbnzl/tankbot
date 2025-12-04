@@ -22,6 +22,8 @@ with open("resources/yolo_conf.json") as f:
 person_follow_thread = None
 person_follow_stop_event: threading.Event | None = None
 
+_latest_frame = None
+_latest_frame_lock = threading.Lock()
 
 # NEW: toggle between CPU YOLO and Hailo
 USE_HAILO = True  # set False to go back to plain Ultralytics on CPU
@@ -95,11 +97,29 @@ def frame_grabber():
 threading.Thread(target=frame_grabber, daemon=True).start()
 
 
-def get_latest_frame():
-    with frame_lock:
-        if latest_frame is None:
-            raise RuntimeError("No frame yet")
-        return latest_frame.copy()
+def get_latest_frame(block=True, sleep_time=0.01):
+    """
+    Returns the latest frame. If block=True, waits until a frame is available.
+    """
+    global _latest_frame
+    if not block:
+        if _latest_frame is None:
+            return None
+        with _latest_frame_lock:
+            return _latest_frame
+
+    # block=True
+    while True:
+        with _latest_frame_lock:
+            if _latest_frame is not None:
+                return _latest_frame
+        time.sleep(sleep_time)
+
+
+def update_latest_frame(frame):
+    global _latest_frame
+    with _latest_frame_lock:
+        _latest_frame = frame
 
 
 def annotate_frame(frame):
