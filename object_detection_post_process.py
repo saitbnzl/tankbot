@@ -117,7 +117,7 @@ def extract_detections(image: np.ndarray, detections: list, config_data) -> dict
         for det in detection:
             # Boş veya beklenenden kısa detection'ları atla
             det = np.asarray(det)
-            if det.size < 5:
+            if det.size < 6:
                 continue
 
             bbox, score = det[:4], det[4]
