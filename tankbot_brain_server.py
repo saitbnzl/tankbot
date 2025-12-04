@@ -149,16 +149,6 @@ class DriveRequest(BaseModel):
 #                     ROUTES
 # ============================================================
 
-@app.get("/detect")
-def detect():
-    frame = get_latest_frame()
-    detections = _run_hailo(frame)
-
-    return {
-        "count": len(detections),
-        "detections": detections,
-    }
-
 
 @app.post("/drive")
 async def drive(req: DriveRequest):
@@ -192,7 +182,7 @@ def video():
     def generator():
         while True:
             frame = get_latest_frame()
-            annotated = annotate_frame(frame)
+            annotated = frame  # Optionally: annotate_frame(frame)
             ok, jpg = cv2.imencode(".jpg", annotated)
             if not ok:
                 continue
