@@ -162,11 +162,11 @@ def extract_detections(image: np.ndarray, detections: list, config_data) -> dict
             arr = _to_flat_float_vector(det)
             if arr is None:
                 # Debug istersen aç:
-                # print("[PP] skipping non-numeric det:", det)
+                print("[PP] skipping non-numeric det:", det)
                 continue
 
             if arr.size < 5:
-                # print(f"[PP] skipping short det size={arr.size}: {arr}")
+                print(f"[PP] skipping short det size={arr.size}: {arr}")
                 continue
 
             bbox = arr[:4]
