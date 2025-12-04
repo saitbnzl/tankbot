@@ -50,6 +50,7 @@ if USE_HAILO:
     model = Detector(
         hef_path="resources/yolov8s.hef",
         labels_path="resources/coco_labels.txt",
+        config_data=config_data,
         # class_filter=[0],
         use_hailo=True,
     )
