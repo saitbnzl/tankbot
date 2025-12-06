@@ -76,6 +76,15 @@ class Detector:
               "confidence": float,
               "bbox": [x1, y1, x2, y2],
             }
+        
+        Uses a timeout mechanism to prevent hanging. If detection takes longer than
+        self.timeout seconds, a TimeoutError is raised.
+        
+        Note: Uses daemon thread for timeout. If timeout occurs, the thread continues
+        running in background but won't prevent program exit. This is acceptable since:
+        1. Detection operations are stateless per-frame
+        2. Hailo device handles concurrent access safely
+        3. Alternative would be complex thread cancellation which isn't reliable in Python
         """
         result_queue = queue.Queue()
         exception_queue = queue.Queue()
@@ -87,13 +96,15 @@ class Detector:
             except Exception as e:
                 exception_queue.put(e)
         
+        # Use daemon thread to allow clean timeout without complex cancellation
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
         thread.join(timeout=self.timeout)
         
         if thread.is_alive():
-            # Timeout occurred
+            # Timeout occurred - thread continues in background but won't block exit
             print(f"[DETECTOR][ERROR] Detection timed out after {self.timeout} seconds!", flush=True)
+            print(f"[DETECTOR][WARNING] Background thread will complete eventually", flush=True)
             raise TimeoutError(f"Detection timed out after {self.timeout} seconds")
         
         # Check for exceptions

@@ -33,6 +33,9 @@ STUCK_YAW        = 0.003   # bunun altı: "resmen dönmüyoruz"
 SLOW_YAW         = 0.006   # bunun altı: "yavaş dönüyor"
 FAST_YAW         = 0.010   # bunun üstü: "fazla hızlı"
 
+# Error recovery delay (seconds)
+ERROR_RECOVERY_SLEEP = 0.5
+
 
 # ==========================
 # PERSON SELECTION
@@ -273,12 +276,12 @@ async def person_follow_loop(get_frame, send_motor_command, model, stop_event: a
             except TimeoutError as e:
                 print(f"[FOLLOW][ERROR] Detection timed out: {e}", flush=True)
                 print("[FOLLOW] Skipping this frame and continuing...", flush=True)
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(ERROR_RECOVERY_SLEEP)
                 continue
             except Exception as e:
                 print(f"[FOLLOW][ERROR] Detection failed: {e}", flush=True)
                 traceback.print_exc()
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(ERROR_RECOVERY_SLEEP)
                 continue
 
             best, max_person_ratio = pick_main_person(

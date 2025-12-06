@@ -25,7 +25,9 @@ HEF_PATH = "resources/yolov8s.hef"
 LABELS_PATH = "resources/coco_labels.txt"
 
 # Debug logging flag - set to False to reduce log verbosity during inference
-DEBUG_INFERENCE = True
+# Can be controlled via environment variable: HAILO_DEBUG_INFERENCE=1
+import os
+DEBUG_INFERENCE = os.environ.get('HAILO_DEBUG_INFERENCE', '0') == '1'
 
 # ---------- GLOBAL STATE ----------
 _input_shape = None    # (H, W, C)

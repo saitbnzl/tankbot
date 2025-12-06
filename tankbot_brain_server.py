@@ -46,6 +46,9 @@ person_follow_stop_event: threading.Event | None = None
 VIDEO_URL = "http://192.168.1.50:81/stream"
 WS_URL    = "ws://tankbot.local:81"
 
+# Error recovery delay for video streaming (seconds)
+ERROR_RECOVERY_DELAY = 0.1
+
 if USE_HAILO:
     model = Detector(
         hef_path="resources/yolov8s.hef",
@@ -236,7 +239,7 @@ def video():
                 import traceback
                 traceback.print_exc()
                 import time
-                time.sleep(0.1)  # avoid tight loop on persistent errors
+                time.sleep(ERROR_RECOVERY_DELAY)  # avoid tight loop on persistent errors
 
     return StreamingResponse(
         generator(),
