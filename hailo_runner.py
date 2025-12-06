@@ -44,6 +44,7 @@ _input_vstream_info = None
 _output_vstream_info = None
 _input_vstreams_params = None
 _output_vstreams_params = None
+_raw_output_logged = False
 
 
 
@@ -218,6 +219,7 @@ def _postprocess(raw_outputs, frame_bgr: np.ndarray, config_data: dict, class_fi
           "bbox": [x1, y1, x2, y2],
         }
     """
+    _log_raw_output_structure(raw_outputs)
     dets = extract_detections(frame_bgr, raw_outputs, config_data)
 
     boxes = dets["detection_boxes"]
@@ -243,3 +245,27 @@ def _postprocess(raw_outputs, frame_bgr: np.ndarray, config_data: dict, class_fi
             }
         )
     return results
+
+
+def _log_raw_output_structure(raw_outputs):
+    global _raw_output_logged
+    if _raw_output_logged:
+        return
+    _raw_output_logged = True
+    try:
+        arr = np.asarray(raw_outputs)
+        desc = (
+            f"[HAILO][INSPECT] raw output type={type(raw_outputs).__name__}, "
+            f"shape={arr.shape}, dtype={arr.dtype}"
+        )
+        if arr.size:
+            desc += f", min={float(arr.min()):.4f}, max={float(arr.max()):.4f}"
+        print(desc, flush=True)
+        if arr.size:
+            sample = arr.flatten()[: min(10, arr.size)]
+            print(f"[HAILO][INSPECT] sample={sample}", flush=True)
+    except Exception as exc:
+        preview = str(raw_outputs)
+        if len(preview) > 200:
+            preview = preview[:200] + "..."
+        print(f"[HAILO][INSPECT] raw output uninspectable ({exc}): {preview}", flush=True)
