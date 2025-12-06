@@ -1,3 +1,4 @@
+import os
 import cv2
 import numpy as np
 from common.toolbox import id_to_color
@@ -5,6 +6,8 @@ from common.toolbox import id_to_color
 # Model input shape is updated by hailo_runner after HEF init.
 _MODEL_INPUT_SHAPE: tuple[int, int] | None = None
 _PRINTED_DECODE_INFO = False
+_STRUCTURE_DUMPED = False
+DEBUG_PP = os.environ.get("HAILO_DEBUG_PP", "0") == "1"
 
 
 def _sigmoid(x):
@@ -146,6 +149,8 @@ def extract_detections(image: np.ndarray, detections: list, config_data) -> dict
     visualization_params = config_data["visualization_params"]
     score_threshold = visualization_params.get("score_thres", 0.5)
     max_boxes = visualization_params.get("max_boxes_to_draw", 50)
+
+    _maybe_dump_structure(detections)
 
     dense_tensor = _try_get_dense_tensor(detections)
     if dense_tensor is not None:
@@ -342,32 +347,42 @@ def _extract_from_class_lists(image, detections, score_threshold, max_boxes):
             detection = detection.reshape(1, -1)
 
         for det in detection:
-            arr = _to_flat_float_vector(det)
-            if arr is None:
-                print("[PP] skipping non-numeric det:", det)
-                continue
+            parsed = _parse_detection_dict(det, class_id, img_height, img_width)
+            if parsed is not None:
+                score, cid, denorm_bbox = parsed
+                if score < score_threshold:
+                    continue
+            else:
+                arr = _to_flat_float_vector(det)
+                if arr is None:
+                    if DEBUG_PP:
+                        print("[PP][DEBUG] skipping non-numeric det:", det)
+                    continue
 
-            if arr.size < 5:
-                print(f"[PP] skipping short det size={arr.size}: {arr}")
-                continue
+                if arr.size < 5:
+                    if DEBUG_PP:
+                        print(f"[PP][DEBUG] skipping short det size={arr.size}: {arr}")
+                    continue
 
-            bbox = arr[:4]
-            score_vec = arr[4:]
-            if score_vec.size == 0:
-                continue
-            score = float(score_vec[0])
+                bbox = arr[:4]
+                score_vec = arr[4:]
+                if score_vec.size == 0:
+                    continue
+                score = float(score_vec[0])
+                cid = class_id
 
-            if score < score_threshold:
-                continue
+                if score < score_threshold:
+                    continue
 
-            denorm_bbox = denormalize_and_rm_pad(
-                list(bbox),
-                size,
-                padding_length,
-                img_height,
-                img_width,
-            )
-            all_detections.append((score, class_id, denorm_bbox))
+                denorm_bbox = denormalize_and_rm_pad(
+                    list(bbox),
+                    size,
+                    padding_length,
+                    img_height,
+                    img_width,
+                )
+
+            all_detections.append((score, cid, denorm_bbox))
 
     all_detections.sort(reverse=True, key=lambda x: x[0])
     top_detections = all_detections[:max_boxes]
@@ -505,3 +520,79 @@ def compute_iou(boxA, boxB):
     areaA = max(1e-5, (boxA[2] - boxA[0]) * (boxA[3] - boxA[1]))
     areaB = max(1e-5, (boxB[2] - boxB[0]) * (boxB[3] - boxB[1]))
     return inter / (areaA + areaB - inter + 1e-5)
+
+
+def _maybe_dump_structure(detections):
+    global _STRUCTURE_DUMPED
+    if _STRUCTURE_DUMPED:
+        return
+    _STRUCTURE_DUMPED = True
+    try:
+        arr = np.asarray(detections)
+        if arr.size > 0:
+            desc = (
+                f"[PP][INSPECT] raw type={type(detections).__name__}, "
+                f"array_shape={arr.shape}, dtype={arr.dtype}"
+            )
+            if np.issubdtype(arr.dtype, np.number):
+                desc += f", min={float(arr.min()):.4f}, max={float(arr.max()):.4f}"
+            print(desc, flush=True)
+            first = arr.flatten()[0]
+            print(f"[PP][INSPECT] first value sample={first}", flush=True)
+            return
+    except Exception:
+        pass
+    print(f"[PP][INSPECT] raw detections type={type(detections).__name__}", flush=True)
+
+
+def _parse_detection_dict(det, fallback_class, img_height, img_width):
+    if not isinstance(det, dict):
+        return None
+
+    score = det.get("score")
+    if score is None:
+        score = det.get("confidence", det.get("conf"))
+    if score is None:
+        return None
+
+    try:
+        score = float(score)
+    except Exception:
+        return None
+
+    cid = det.get("class_id", det.get("class", det.get("cls", fallback_class)))
+    try:
+        cid = int(cid)
+    except Exception:
+        cid = fallback_class
+
+    bbox = det.get("bbox")
+    if bbox is None:
+        keys = ("x1", "y1", "x2", "y2")
+        if all(k in det for k in keys):
+            bbox = [det[k] for k in keys]
+        else:
+            keys = ("xmin", "ymin", "xmax", "ymax")
+            if all(k in det for k in keys):
+                bbox = [det[k] for k in keys]
+    if bbox is None:
+        return None
+
+    try:
+        bbox = [float(v) for v in bbox[:4]]
+    except Exception:
+        return None
+
+    normalized_flag = det.get("normalized")
+    if normalized_flag is True or (
+        normalized_flag is None and max(abs(v) for v in bbox) <= 1.5
+    ):
+        x1 = bbox[0] * img_width
+        y1 = bbox[1] * img_height
+        x2 = bbox[2] * img_width
+        y2 = bbox[3] * img_height
+    else:
+        x1, y1, x2, y2 = bbox
+
+    denorm_bbox = list(map(int, [x1, y1, x2, y2]))
+    return score, cid, denorm_bbox
