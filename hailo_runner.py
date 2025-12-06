@@ -18,7 +18,7 @@ from hailo_platform import (
 )
 
 
-from object_detection_post_process import extract_detections
+from object_detection_post_process import extract_detections, set_model_input_shape
 
 # ---------- CONFIG (can be overridden via configure_model) ----------
 HEF_PATH = "resources/yolov8s.hef"
@@ -114,6 +114,7 @@ def _init_hailo():
             _input_vstream_info = hef.get_input_vstream_infos()[0]
             _output_vstream_info = hef.get_output_vstream_infos()[0]
             _input_shape = _input_vstream_info.shape  # (H, W, C)
+            set_model_input_shape(_input_shape)
             print(f"[HAILO] Input shape: {_input_shape}", flush=True)
             
             # 5) Create vstream params (dicts keyed by stream name)

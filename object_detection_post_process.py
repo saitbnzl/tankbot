@@ -2,6 +2,27 @@ import cv2
 import numpy as np
 from common.toolbox import id_to_color
 
+# Model input shape is updated by hailo_runner after HEF init.
+_MODEL_INPUT_SHAPE: tuple[int, int] | None = None
+
+
+def set_model_input_shape(shape):
+    """
+    Receive the (H, W, C) shape reported by the HEF input stream.
+    We only care about height/width for coordinate scaling.
+    """
+    global _MODEL_INPUT_SHAPE
+    if not shape or len(shape) < 2:
+        _MODEL_INPUT_SHAPE = None
+        return
+    try:
+        height = int(shape[0])
+        width = int(shape[1])
+    except (TypeError, ValueError):
+        _MODEL_INPUT_SHAPE = None
+        return
+    _MODEL_INPUT_SHAPE = (height, width)
+
 
 def inference_result_handler(original_frame, infer_results, labels, config_data, tracker=None):
     # if infer_results is [output] wrap:
@@ -111,46 +132,198 @@ def _to_flat_float_vector(det):
 
 def extract_detections(image: np.ndarray, detections: list, config_data) -> dict:
     """
-    Extract detections from the input data.
+    Extract detections from raw model outputs.
 
-    Args:
-        image (np.ndarray): Image to draw on.
-        detections (list or np.ndarray): Raw detections from the model.
-        config_data (Dict): Loaded JSON config containing post-processing metadata.
-
-    Returns:
-        dict: Filtered detection results containing 'detection_boxes',
-              'detection_classes', 'detection_scores', and 'num_detections'.
+    Supports two formats:
+      1) Dense YOLO-style tensors shaped (N, 4 + 1 + num_classes)
+      2) Legacy per-class lists where detections[class_id] holds boxes
     """
-
     visualization_params = config_data["visualization_params"]
     score_threshold = visualization_params.get("score_thres", 0.5)
     max_boxes = visualization_params.get("max_boxes_to_draw", 50)
 
-    # values used for scaling coords and removing padding
+    dense_tensor = _try_get_dense_tensor(detections)
+    if dense_tensor is not None:
+        decoded = _decode_dense_tensor(image, dense_tensor, score_threshold, max_boxes)
+        if decoded is not None:
+            return decoded
+
+    return _extract_from_class_lists(
+        image,
+        detections,
+        score_threshold,
+        max_boxes,
+    )
+
+
+def _try_get_dense_tensor(detections):
+    """
+    Attempt to interpret detections as a dense numeric tensor.
+    Returns a 2D array with shape (N, C) if possible, otherwise None.
+    """
+    try:
+        arr = np.asarray(detections, dtype=np.float32)
+    except Exception:
+        return None
+
+    if arr.size == 0:
+        return None
+
+    arr = np.squeeze(arr)
+    if arr.ndim == 1:
+        if arr.size <= 5:
+            return None
+        arr = arr.reshape(1, -1)
+    elif arr.ndim > 2:
+        last_dim = arr.shape[-1]
+        if last_dim <= 5:
+            return None
+        try:
+            arr = arr.reshape(-1, last_dim)
+        except ValueError:
+            return None
+
+    if arr.ndim != 2 or arr.shape[1] <= 5:
+        return None
+
+    return arr
+
+
+def _decode_dense_tensor(image, tensor, score_threshold, max_boxes):
+    """
+    Decode YOLO-style tensors into detection dicts.
+    Expected layout per entry: [x, y, w, h, obj, class_probs...]
+    """
+    num_entries, num_fields = tensor.shape
+    if num_fields <= 5:
+        return None
+
+    img_height, img_width = image.shape[:2]
+    xywh = tensor[:, :4]
+    objectness = tensor[:, 4].reshape(num_entries, 1)
+    class_scores = tensor[:, 5:]
+
+    if class_scores.size == 0:
+        return None
+
+    combined_scores = class_scores * objectness
+    class_ids = np.argmax(combined_scores, axis=1)
+    scores = combined_scores[np.arange(combined_scores.shape[0]), class_ids]
+
+    keep = scores >= score_threshold
+    if not np.any(keep):
+        print("[PP] got 0 detections after filtering")
+        return {
+            "detection_boxes": [],
+            "detection_classes": [],
+            "detection_scores": [],
+            "num_detections": 0,
+        }
+
+    xywh = xywh[keep]
+    scores = scores[keep]
+    class_ids = class_ids[keep]
+
+    boxes_xyxy = _xywh_to_xyxy(xywh, img_width, img_height)
+    if boxes_xyxy.size == 0:
+        print("[PP] got 0 detections after filtering")
+        return {
+            "detection_boxes": [],
+            "detection_classes": [],
+            "detection_scores": [],
+            "num_detections": 0,
+        }
+
+    # Filter invalid boxes (non-positive width/height)
+    widths = boxes_xyxy[:, 2] - boxes_xyxy[:, 0]
+    heights = boxes_xyxy[:, 3] - boxes_xyxy[:, 1]
+    valid = (widths > 1) & (heights > 1)
+    boxes_xyxy = boxes_xyxy[valid]
+    scores = scores[valid]
+    class_ids = class_ids[valid]
+
+    if boxes_xyxy.size == 0:
+        print("[PP] got 0 detections after filtering")
+        return {
+            "detection_boxes": [],
+            "detection_classes": [],
+            "detection_scores": [],
+            "num_detections": 0,
+        }
+
+    order = np.argsort(scores)[::-1]
+    if max_boxes:
+        order = order[:max_boxes]
+    boxes_xyxy = boxes_xyxy[order]
+    scores = scores[order]
+    class_ids = class_ids[order]
+
+    print(f"[PP] got {len(scores)} raw detections (dense tensor)")
+
+    return {
+        "detection_boxes": boxes_xyxy.tolist(),
+        "detection_classes": class_ids.tolist(),
+        "detection_scores": scores.tolist(),
+        "num_detections": len(scores),
+    }
+
+
+def _xywh_to_xyxy(xywh, img_width, img_height):
+    if xywh.size == 0:
+        return np.empty((0, 4), dtype=float)
+
+    normalized = float(np.max(np.abs(xywh))) <= 2.0
+    if normalized:
+        xs = xywh[:, 0] * img_width
+        ys = xywh[:, 1] * img_height
+        ws = xywh[:, 2] * img_width
+        hs = xywh[:, 3] * img_height
+    else:
+        if _MODEL_INPUT_SHAPE:
+            model_h, model_w = _MODEL_INPUT_SHAPE
+            scale_x = img_width / float(model_w if model_w else 1)
+            scale_y = img_height / float(model_h if model_h else 1)
+        else:
+            scale_x = scale_y = 1.0
+        xs = xywh[:, 0] * scale_x
+        ys = xywh[:, 1] * scale_y
+        ws = xywh[:, 2] * scale_x
+        hs = xywh[:, 3] * scale_y
+
+    x1 = xs - ws / 2.0
+    y1 = ys - hs / 2.0
+    x2 = xs + ws / 2.0
+    y2 = ys + hs / 2.0
+
+    boxes = np.stack([x1, y1, x2, y2], axis=1)
+    boxes[:, 0::2] = np.clip(boxes[:, 0::2], 0, img_width - 1)
+    boxes[:, 1::2] = np.clip(boxes[:, 1::2], 0, img_height - 1)
+    return boxes
+
+
+def _extract_from_class_lists(image, detections, score_threshold, max_boxes):
+    """
+    Original per-class extraction logic. Kept for compatibility in case
+    the HEF already performs NMS and emits class-separated detections.
+    """
     img_height, img_width = image.shape[:2]
     size = max(img_height, img_width)
     padding_length = int(abs(img_height - img_width) / 2)
 
     all_detections = []
-
-    # Normalize top-level container
     detections = np.asarray(detections, dtype=object)
 
     for class_id, detection in enumerate(detections):
         detection = np.asarray(detection, dtype=object)
-
         if detection.size == 0:
             continue
 
-        # 1D ise tek satır, 2D ise çoklu; ikisini de aynı şekilde gez
         if detection.ndim == 1:
             detection = detection.reshape(1, -1)
 
         for det in detection:
             arr = _to_flat_float_vector(det)
             if arr is None:
-                # Debug istersen aç:
                 print("[PP] skipping non-numeric det:", det)
                 continue
 
@@ -176,7 +349,6 @@ def extract_detections(image: np.ndarray, detections: list, config_data) -> dict
             )
             all_detections.append((score, class_id, denorm_bbox))
 
-    # score'a göre sırala (desc)
     all_detections.sort(reverse=True, key=lambda x: x[0])
     top_detections = all_detections[:max_boxes]
 
