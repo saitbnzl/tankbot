@@ -268,7 +268,15 @@ async def person_follow_loop(get_frame, send_motor_command, model, stop_event: a
             adaptive_turn_calibration(last_cmd, small)
 
             # DETECTION (Hailo veya YOLO – unified Detector)
-            detections = model(frame, imgsz=IMG_SIZE, verbose=False)
+            try:
+                print("[FOLLOW] Calling model for detection...", flush=True)
+                detections = model(frame, imgsz=IMG_SIZE, verbose=False)
+                print(f"[FOLLOW] Detection returned {len(detections)} results", flush=True)
+            except Exception as e:
+                print(f"[FOLLOW][ERROR] Detection failed: {e}", flush=True)
+                traceback.print_exc()
+                await asyncio.sleep(0.5)
+                continue
 
             best, max_person_ratio = pick_main_person(
                 detections,

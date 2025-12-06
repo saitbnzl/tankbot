@@ -116,7 +116,16 @@ def annotate_frame(frame):
     # İstersen IMG_SIZE config'ten gelebilir; şimdilik sabit varsayalım:
     IMG_SIZE = 320
 
-    detections = model(frame, imgsz=IMG_SIZE, verbose=False)
+    try:
+        print("[SERVER] Calling model for detection in annotate_frame...", flush=True)
+        detections = model(frame, imgsz=IMG_SIZE, verbose=False)
+        print(f"[SERVER] Detection returned {len(detections)} results", flush=True)
+    except Exception as e:
+        print(f"[SERVER][ERROR] Detection failed in annotate_frame: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        # Return unannotated frame on error
+        return frame
 
     annotated = frame.copy()
     for det in detections:
@@ -206,18 +215,25 @@ async def drive(req: DriveRequest):
 def video():
     def generator():
         while True:
-            frame = get_latest_frame()
-            annotated = annotate_frame(frame)
-            ok, jpg = cv2.imencode(".jpg", annotated)
-            if not ok:
-                continue
+            try:
+                frame = get_latest_frame()
+                annotated = annotate_frame(frame)
+                ok, jpg = cv2.imencode(".jpg", annotated)
+                if not ok:
+                    continue
 
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" +
-                jpg.tobytes() +
-                b"\r\n"
-            )
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" +
+                    jpg.tobytes() +
+                    b"\r\n"
+                )
+            except Exception as e:
+                print(f"[SERVER][ERROR] Video generator error: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+                import time
+                time.sleep(0.1)  # avoid tight loop on persistent errors
 
     return StreamingResponse(
         generator(),
