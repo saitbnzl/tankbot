@@ -22,5 +22,5 @@ if command -v lsof >/dev/null 2>&1; then
     fi
 fi
 
-source setup.sh
+source ./venv/bin/activate
 uvicorn tankbot_brain_server:app --host "$HOST" --port "$PORT"
