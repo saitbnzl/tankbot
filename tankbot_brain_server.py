@@ -227,9 +227,24 @@ def video():
 
 @app.get("/status")
 def status():
+    # Determine model information
+    if USE_HAILO:
+        model_type = "Hailo NPU"
+        model_name = "YOLOv8s (Hailo accelerated)"
+        model_file = "yolov8s.hef"
+    else:
+        model_type = "PyTorch CPU"
+        model_name = "YOLOv8n"
+        model_file = "yolov8n.pt"
+    
     return {
         "last_command": last_sent_command,
-        "latest_frame": "ok" if latest_frame is not None else "none"
+        "latest_frame": "ok" if latest_frame is not None else "none",
+        "model": {
+            "type": model_type,
+            "name": model_name,
+            "file": model_file
+        }
     }
 
 

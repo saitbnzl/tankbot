@@ -181,6 +181,9 @@
             <span>TankBot: offline</span>
           </div>
         </div>
+        <div style="margin-top:8px; font-size:12px; opacity:0.8;">
+          <strong>Model:</strong> <span id="model-info">Loading...</span>
+        </div>
       </div>
 
       <div class="card">
@@ -336,7 +339,7 @@ document.getElementById("cfg_deadzone").oninput = (e) =>
         const res = await fetch("/status", { cache: "no-store" });
         const data = await res.json();
 
-        // backend: { latest_frame: "ok"|"none", last_command: {cmd, speed} }
+        // backend: { latest_frame: "ok"|"none", last_command: {cmd, speed}, model: {...} }
         setStatus("video-status", data.latest_frame === "ok");
         // very simple: if status endpoint works, assume tankbot reachable
         setStatus("tankbot-status", true);
@@ -344,9 +347,16 @@ document.getElementById("cfg_deadzone").oninput = (e) =>
         if (data.last_command && data.last_command.cmd) {
           updateGamepad(data.last_command.cmd, data.last_command.speed ?? 0);
         }
+
+        // Update model information
+        if (data.model) {
+          const modelInfo = `${data.model.name} (${data.model.type})`;
+          document.getElementById("model-info").textContent = modelInfo;
+        }
       } catch (e) {
         setStatus("video-status", false);
         setStatus("tankbot-status", false);
+        document.getElementById("model-info").textContent = "Unknown";
       }
     }
 
