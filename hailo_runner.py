@@ -1,6 +1,7 @@
 # hailo_runner.py
 
 import threading
+import traceback
 import numpy as np
 import cv2
 
@@ -23,6 +24,11 @@ from object_detection_post_process import extract_detections
 HEF_PATH = "resources/yolov8s.hef"
 LABELS_PATH = "resources/coco_labels.txt"
 
+# Debug logging flag - set to False to reduce log verbosity during inference
+# Can be controlled via environment variable: HAILO_DEBUG_INFERENCE=1
+import os
+DEBUG_INFERENCE = os.environ.get('HAILO_DEBUG_INFERENCE', '0') == '1'
+
 # ---------- GLOBAL STATE ----------
 _input_shape = None    # (H, W, C)
 _labels = []
@@ -38,9 +44,6 @@ _input_vstream_info = None
 _output_vstream_info = None
 _input_vstreams_params = None
 _output_vstreams_params = None
-
-_input_shape = None
-_labels = []
 
 
 
@@ -71,17 +74,6 @@ def _load_labels(path: str):
     return labels
 
 
-def _load_labels(path: str):
-    labels = []
-    with open(path, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            labels.append(line)
-    return labels
-
-
 def _init_hailo():
     global _hailo_inited, _vdevice, _network_group, _network_group_params
     global _input_vstream_info, _output_vstream_info
@@ -95,40 +87,62 @@ def _init_hailo():
         if _hailo_inited:
             return
 
-        # 1) Load HEF
-        hef = HEF(HEF_PATH)
-
-        # 2) Open device
-        _vdevice = VDevice()
-
-        # 3) Configure from HEF (this is the “official” pattern)
-        configure_params = ConfigureParams.create_from_hef(
+        try:
+            print(f"[HAILO] Initializing Hailo with HEF: {HEF_PATH}", flush=True)
+            
+            # 1) Load HEF
+            print("[HAILO] Loading HEF file...", flush=True)
+            hef = HEF(HEF_PATH)
+            print("[HAILO] HEF loaded successfully", flush=True)
+            
+            # 2) Open device
+            print("[HAILO] Opening VDevice...", flush=True)
+            _vdevice = VDevice()
+            print("[HAILO] VDevice opened successfully", flush=True)
+            
+            # 3) Configure from HEF (this is the official pattern)
+            print("[HAILO] Configuring device with HEF...", flush=True)
+            configure_params = ConfigureParams.create_from_hef(
             hef, interface=HailoStreamInterface.PCIe
-        )
-        _network_group = _vdevice.configure(hef, configure_params)[0]
-        _network_group_params = _network_group.create_params()
-
-        # 4) Stream infos
-        _input_vstream_info = hef.get_input_vstream_infos()[0]
-        _output_vstream_info = hef.get_output_vstream_infos()[0]
-        _input_shape = _input_vstream_info.shape  # (H, W, C)
-
-        # 5) Create vstream params (dicts keyed by stream name)
-        _input_vstreams_params = InputVStreamParams.make_from_network_group(
+            )
+            _network_group = _vdevice.configure(hef, configure_params)[0]
+            _network_group_params = _network_group.create_params()
+            print("[HAILO] Device configured successfully", flush=True)
+            
+            # 4) Stream infos
+            print("[HAILO] Getting stream infos...", flush=True)
+            _input_vstream_info = hef.get_input_vstream_infos()[0]
+            _output_vstream_info = hef.get_output_vstream_infos()[0]
+            _input_shape = _input_vstream_info.shape  # (H, W, C)
+            print(f"[HAILO] Input shape: {_input_shape}", flush=True)
+            
+            # 5) Create vstream params (dicts keyed by stream name)
+            print("[HAILO] Creating vstream params...", flush=True)
+            _input_vstreams_params = InputVStreamParams.make_from_network_group(
             _network_group,
             quantized=False,
             format_type=FormatType.FLOAT32,
-        )
-        _output_vstreams_params = OutputVStreamParams.make_from_network_group(
+            )
+            _output_vstreams_params = OutputVStreamParams.make_from_network_group(
             _network_group,
             quantized=False,   # or True / UINT8 depending on your HEF
             format_type=FormatType.FLOAT32,
-        )
-
-        # 6) Labels
-        _labels = _load_labels(LABELS_PATH)
-
-        _hailo_inited = True
+            )
+            
+            print("[HAILO] Vstream params created successfully", flush=True)
+            
+            # 6) Labels
+            print(f"[HAILO] Loading labels from: {LABELS_PATH}", flush=True)
+            _labels = _load_labels(LABELS_PATH)
+            print(f"[HAILO] Loaded {len(_labels)} labels", flush=True)
+            
+            _hailo_inited = True
+            print("[HAILO] Initialization complete!", flush=True)
+        except Exception as e:
+            print(f"[HAILO][ERROR] Initialization failed: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            raise
 
 
 
@@ -152,24 +166,45 @@ def _run_hailo(frame_bgr: np.ndarray, config_data: dict, class_filter=None):
     Main entry point for Hailo inference.
     Returns a list of detection dicts (used by Detector).
     """
-    _init_hailo()
+    try:
+        if DEBUG_INFERENCE:
+            print("[HAILO] Starting inference...", flush=True)
+        _init_hailo()
 
-    inp = _preprocess(frame_bgr)
-    input_data = { _input_vstream_info.name: np.expand_dims(inp, axis=0) }
+        if DEBUG_INFERENCE:
+            print("[HAILO] Preprocessing frame...", flush=True)
+        inp = _preprocess(frame_bgr)
+        input_data = {
+            _input_vstream_info.name: np.expand_dims(inp, axis=0)  # add batch axis
+        }
 
+        if DEBUG_INFERENCE:
+            print("[HAILO] Running inference on device...", flush=True)
+        # Run inference using InferVStreams (no _input_vstreams/_output_vstreams globals)
+        with _network_group.activate(_network_group_params):
+            with InferVStreams(
+                _network_group,
+                _input_vstreams_params,
+                _output_vstreams_params,
+            ) as infer_pipeline:
+                if DEBUG_INFERENCE:
+                    print("[HAILO] Calling infer_pipeline.infer()...", flush=True)
+                results = infer_pipeline.infer(input_data)
+                if DEBUG_INFERENCE:
+                    print("[HAILO] Inference completed", flush=True)
 
-    # Run inference using InferVStreams (no _input_vstreams/_output_vstreams globals)
-    with _network_group.activate(_network_group_params):
-        with InferVStreams(
-            _network_group,
-            _input_vstreams_params,
-            _output_vstreams_params,
-        ) as infer_pipeline:
-            results = infer_pipeline.infer(input_data)
+        raw_output = results[_output_vstream_info.name]
 
-    raw_output = results[_output_vstream_info.name]
-
-    return _postprocess(raw_output, frame_bgr, config_data, class_filter)
+        if DEBUG_INFERENCE:
+            print("[HAILO] Post-processing results...", flush=True)
+        detections = _postprocess(raw_output, frame_bgr, config_data, class_filter)
+        if DEBUG_INFERENCE:
+            print(f"[HAILO] Inference successful, found {len(detections)} detections", flush=True)
+        return detections
+    except Exception as e:
+        print(f"[HAILO][ERROR] Inference failed: {e}", flush=True)
+        traceback.print_exc()
+        raise
 
 
 def _postprocess(raw_outputs, frame_bgr: np.ndarray, config_data: dict, class_filter=None):
