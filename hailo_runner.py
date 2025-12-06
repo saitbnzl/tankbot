@@ -24,6 +24,9 @@ from object_detection_post_process import extract_detections
 HEF_PATH = "resources/yolov8s.hef"
 LABELS_PATH = "resources/coco_labels.txt"
 
+# Debug logging flag - set to False to reduce log verbosity during inference
+DEBUG_INFERENCE = True
+
 # ---------- GLOBAL STATE ----------
 _input_shape = None    # (H, W, C)
 _labels = []
@@ -158,16 +161,19 @@ def _run_hailo(frame_bgr: np.ndarray, config_data: dict, class_filter=None):
     Returns a list of detection dicts (used by Detector).
     """
     try:
-        print("[HAILO] Starting inference...", flush=True)
+        if DEBUG_INFERENCE:
+            print("[HAILO] Starting inference...", flush=True)
         _init_hailo()
 
-        print("[HAILO] Preprocessing frame...", flush=True)
+        if DEBUG_INFERENCE:
+            print("[HAILO] Preprocessing frame...", flush=True)
         inp = _preprocess(frame_bgr)
         input_data = {
             _input_vstream_info.name: np.expand_dims(inp, axis=0)  # add batch axis
         }
 
-        print("[HAILO] Running inference on device...", flush=True)
+        if DEBUG_INFERENCE:
+            print("[HAILO] Running inference on device...", flush=True)
         # Run inference using InferVStreams (no _input_vstreams/_output_vstreams globals)
         with _network_group.activate(_network_group_params):
             with InferVStreams(
@@ -175,19 +181,22 @@ def _run_hailo(frame_bgr: np.ndarray, config_data: dict, class_filter=None):
                 _input_vstreams_params,
                 _output_vstreams_params,
             ) as infer_pipeline:
-                print("[HAILO] Calling infer_pipeline.infer()...", flush=True)
+                if DEBUG_INFERENCE:
+                    print("[HAILO] Calling infer_pipeline.infer()...", flush=True)
                 results = infer_pipeline.infer(input_data)
-                print("[HAILO] Inference completed", flush=True)
+                if DEBUG_INFERENCE:
+                    print("[HAILO] Inference completed", flush=True)
 
         raw_output = results[_output_vstream_info.name]
 
-        print("[HAILO] Post-processing results...", flush=True)
+        if DEBUG_INFERENCE:
+            print("[HAILO] Post-processing results...", flush=True)
         detections = _postprocess(raw_output, frame_bgr, config_data, class_filter)
-        print(f"[HAILO] Inference successful, found {len(detections)} detections", flush=True)
+        if DEBUG_INFERENCE:
+            print(f"[HAILO] Inference successful, found {len(detections)} detections", flush=True)
         return detections
     except Exception as e:
         print(f"[HAILO][ERROR] Inference failed: {e}", flush=True)
-        import traceback
         traceback.print_exc()
         raise
 

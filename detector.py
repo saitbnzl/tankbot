@@ -1,5 +1,7 @@
 # detector.py
 
+import threading
+import queue
 import numpy as np
 from ultralytics import YOLO
 from hailo_runner import _run_hailo, configure_model
@@ -14,10 +16,12 @@ class Detector:
         config_data: dict | None = None,
         class_filter: list[int] | None = None,
         use_hailo: bool = False,
+        timeout: float = 10.0,  # Default 10 second timeout
     ):
         self.use_hailo = use_hailo
         self.class_filter = class_filter
         self.config_data = config_data
+        self.timeout = timeout
 
         if self.use_hailo:
             self.mode = "hailo"
@@ -28,27 +32,18 @@ class Detector:
                 raise ValueError("pt_path is required when use_hailo=False")
             self.model = YOLO(pt_path)
 
-    def __call__(self, frame_bgr, imgsz=None, verbose=False):
+    def _run_detection_with_timeout(self, frame_bgr, imgsz, verbose):
         """
-        detections = model(frame_bgr, imgsz=..., verbose=...)
-
-        Her iki modda da aynı yapıda döner:
-            {
-              "class_id": int,
-              "class_name": str,
-              "confidence": float,
-              "bbox": [x1, y1, x2, y2],
-            }
+        Internal method to run detection, can be called from a thread
         """
         if self.mode == "hailo":
             if self.config_data is None:
                 raise ValueError("config_data must be provided for Hailo mode")
-            dets = _run_hailo(
+            return _run_hailo(
                 frame_bgr,
                 config_data=self.config_data,
                 class_filter=self.class_filter,
             )
-            return dets
 
         # PyTorch YOLO path
         results = self.model(frame_bgr, imgsz=imgsz, verbose=verbose)[0]
@@ -69,3 +64,46 @@ class Detector:
                 }
             )
         return dets
+
+    def __call__(self, frame_bgr, imgsz=None, verbose=False):
+        """
+        detections = model(frame_bgr, imgsz=..., verbose=...)
+
+        Her iki modda da aynı yapıda döner:
+            {
+              "class_id": int,
+              "class_name": str,
+              "confidence": float,
+              "bbox": [x1, y1, x2, y2],
+            }
+        """
+        result_queue = queue.Queue()
+        exception_queue = queue.Queue()
+        
+        def worker():
+            try:
+                result = self._run_detection_with_timeout(frame_bgr, imgsz, verbose)
+                result_queue.put(result)
+            except Exception as e:
+                exception_queue.put(e)
+        
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        thread.join(timeout=self.timeout)
+        
+        if thread.is_alive():
+            # Timeout occurred
+            print(f"[DETECTOR][ERROR] Detection timed out after {self.timeout} seconds!", flush=True)
+            raise TimeoutError(f"Detection timed out after {self.timeout} seconds")
+        
+        # Check for exceptions
+        if not exception_queue.empty():
+            raise exception_queue.get()
+        
+        # Get result
+        if not result_queue.empty():
+            return result_queue.get()
+        else:
+            # Should not happen, but handle it
+            print("[DETECTOR][ERROR] No result from detection thread", flush=True)
+            return []

@@ -53,6 +53,7 @@ if USE_HAILO:
         config_data=config_data,
         # class_filter=[0],
         use_hailo=True,
+        timeout=10.0,  # 10 second timeout for Hailo inference
     )
 else:
     model = YoloDetector("yolov8n.pt")
@@ -117,9 +118,11 @@ def annotate_frame(frame):
     IMG_SIZE = 320
 
     try:
-        print("[SERVER] Calling model for detection in annotate_frame...", flush=True)
         detections = model(frame, imgsz=IMG_SIZE, verbose=False)
-        print(f"[SERVER] Detection returned {len(detections)} results", flush=True)
+    except TimeoutError as e:
+        print(f"[SERVER][ERROR] Detection timed out in annotate_frame: {e}", flush=True)
+        # Return unannotated frame on timeout
+        return frame
     except Exception as e:
         print(f"[SERVER][ERROR] Detection failed in annotate_frame: {e}", flush=True)
         import traceback
