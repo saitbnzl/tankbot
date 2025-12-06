@@ -4,6 +4,11 @@ from common.toolbox import id_to_color
 
 # Model input shape is updated by hailo_runner after HEF init.
 _MODEL_INPUT_SHAPE: tuple[int, int] | None = None
+_PRINTED_DECODE_INFO = False
+
+
+def _sigmoid(x):
+    return 1.0 / (1.0 + np.exp(-x))
 
 
 def set_model_input_shape(shape):
@@ -200,12 +205,27 @@ def _decode_dense_tensor(image, tensor, score_threshold, max_boxes):
 
     img_height, img_width = image.shape[:2]
     xywh = tensor[:, :4]
-    objectness = tensor[:, 4].reshape(num_entries, 1)
+    raw_objectness = tensor[:, 4].reshape(num_entries, 1)
     class_scores = tensor[:, 5:]
 
     if class_scores.size == 0:
         return None
 
+    global _PRINTED_DECODE_INFO
+    if not _PRINTED_DECODE_INFO:
+        try:
+            print(
+                f"[PP][DEBUG] Dense tensor shape={tensor.shape}, "
+                f"raw obj range=({float(raw_objectness.min()):.3f}, {float(raw_objectness.max()):.3f}), "
+                f"class range=({float(class_scores.min()):.3f}, {float(class_scores.max()):.3f})",
+                flush=True,
+            )
+        except Exception:
+            pass
+        _PRINTED_DECODE_INFO = True
+
+    objectness = _sigmoid(raw_objectness)
+    class_scores = _sigmoid(class_scores)
     combined_scores = class_scores * objectness
     class_ids = np.argmax(combined_scores, axis=1)
     scores = combined_scores[np.arange(combined_scores.shape[0]), class_ids]
