@@ -76,12 +76,8 @@ last_sent_command = {"cmd": "stop", "speed": 0}
 #             GLOBAL FRAME GRABBER (single stream)
 # ============================================================
 
-latest_frame = None
-frame_lock = threading.Lock()
-
 
 def frame_grabber():
-    global latest_frame
     print("[FRAME] Starting frame grabber...")
 
     cap = cv2.VideoCapture(VIDEO_URL)
@@ -93,8 +89,7 @@ def frame_grabber():
         if ok and frame is not None:
             # Rotate if your ESP32-CAM orientation requires it
             frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            with frame_lock:
-                latest_frame = frame
+            update_latest_frame(frame)
         time.sleep(0.001)
 
 
@@ -271,7 +266,7 @@ def video():
 def status():
     return {
         "last_command": last_sent_command,
-        "latest_frame": "ok" if latest_frame is not None else "none"
+        "latest_frame": "ok" if get_latest_frame(block=False) is not None else "none"
     }
 
 
