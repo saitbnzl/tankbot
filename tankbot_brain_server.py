@@ -50,6 +50,8 @@ WS_URL    = "ws://tankbot.local:81"
 
 # Error recovery delay for video streaming (seconds)
 ERROR_RECOVERY_DELAY = 0.1
+# Delay between frame grabber reconnect attempts
+FRAME_RECONNECT_DELAY = 1.0
 
 if USE_HAILO:
     model = Detector(
@@ -79,17 +81,31 @@ last_sent_command = {"cmd": "stop", "speed": 0}
 
 def frame_grabber():
     print("[FRAME] Starting frame grabber...")
-
-    cap = cv2.VideoCapture(VIDEO_URL)
-    if not cap.isOpened():
-        raise RuntimeError("Cannot open ESP32-CAM stream")
+    cap = None
 
     while True:
+        if cap is None or not cap.isOpened():
+            if cap is not None:
+                cap.release()
+            print(f"[FRAME] Connecting to stream: {VIDEO_URL}", flush=True)
+            cap = cv2.VideoCapture(VIDEO_URL)
+            if not cap.isOpened():
+                print("[FRAME][WARN] Failed to open stream, retrying...", flush=True)
+                cap.release()
+                cap = None
+                time.sleep(FRAME_RECONNECT_DELAY)
+                continue
+            print("[FRAME] Stream opened", flush=True)
         ok, frame = cap.read()
         if ok and frame is not None:
             # Rotate if your ESP32-CAM orientation requires it
             frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
             update_latest_frame(frame)
+        else:
+            print("[FRAME][WARN] Frame grab failed, forcing reconnect", flush=True)
+            cap.release()
+            cap = None
+            time.sleep(FRAME_RECONNECT_DELAY)
         time.sleep(0.001)
 
 
