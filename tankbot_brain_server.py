@@ -46,6 +46,9 @@ person_follow_stop_event: threading.Event | None = None
 VIDEO_URL = "http://192.168.1.50:81/stream"
 WS_URL    = "ws://tankbot.local:81"
 
+# Error recovery delay for video streaming (seconds)
+ERROR_RECOVERY_DELAY = 0.1
+
 if USE_HAILO:
     model = Detector(
         hef_path="resources/yolov8s.hef",
@@ -53,6 +56,7 @@ if USE_HAILO:
         config_data=config_data,
         # class_filter=[0],
         use_hailo=True,
+        timeout=10.0,  # 10 second timeout for Hailo inference
     )
 else:
     model = YoloDetector("yolov8n.pt")
@@ -116,7 +120,18 @@ def annotate_frame(frame):
     # İstersen IMG_SIZE config'ten gelebilir; şimdilik sabit varsayalım:
     IMG_SIZE = 320
 
-    detections = model(frame, imgsz=IMG_SIZE, verbose=False)
+    try:
+        detections = model(frame, imgsz=IMG_SIZE, verbose=False)
+    except TimeoutError as e:
+        print(f"[SERVER][ERROR] Detection timed out in annotate_frame: {e}", flush=True)
+        # Return unannotated frame on timeout
+        return frame
+    except Exception as e:
+        print(f"[SERVER][ERROR] Detection failed in annotate_frame: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        # Return unannotated frame on error
+        return frame
 
     annotated = frame.copy()
     for det in detections:
@@ -206,18 +221,25 @@ async def drive(req: DriveRequest):
 def video():
     def generator():
         while True:
-            frame = get_latest_frame()
-            annotated = annotate_frame(frame)
-            ok, jpg = cv2.imencode(".jpg", annotated)
-            if not ok:
-                continue
+            try:
+                frame = get_latest_frame()
+                annotated = annotate_frame(frame)
+                ok, jpg = cv2.imencode(".jpg", annotated)
+                if not ok:
+                    continue
 
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" +
-                jpg.tobytes() +
-                b"\r\n"
-            )
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" +
+                    jpg.tobytes() +
+                    b"\r\n"
+                )
+            except Exception as e:
+                print(f"[SERVER][ERROR] Video generator error: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+                import time
+                time.sleep(ERROR_RECOVERY_DELAY)  # avoid tight loop on persistent errors
 
     return StreamingResponse(
         generator(),
