@@ -19,6 +19,7 @@ from hailo_platform import (
 
 
 from object_detection_post_process import extract_detections, set_model_input_shape
+from common.toolbox import default_preprocess
 
 # ---------- CONFIG (can be overridden via configure_model) ----------
 HEF_PATH = "resources/yolov8s.hef"
@@ -150,17 +151,17 @@ def _init_hailo():
 
 def _preprocess(frame_bgr: np.ndarray) -> np.ndarray:
     """
-    Resize + RGB + float32 (0–1 range).
-    Hailo input vstream FLOAT32 beklediği için buradan float32 döndürüyoruz.
+    Hailo HEF models are exported expecting Ultralytics letterbox preprocessing.
+    Use the shared default_preprocess (padding + resize) to preserve aspect ratio.
     """
-    H, W, C = _input_shape
-    resized = cv2.resize(frame_bgr, (W, H), interpolation=cv2.INTER_LINEAR)
-    rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+    if _input_shape is None:
+        raise RuntimeError("Hailo input shape not initialized")
 
-    rgb = rgb.astype(np.float32)
-    rgb /= 255.0       # HEF’i nasıl derlediğine göre bunu isteğe bağlı tutabilirsin
-
-    return rgb
+    model_h, model_w, _ = _input_shape
+    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    letterboxed = default_preprocess(rgb, model_w, model_h)
+    letterboxed = letterboxed.astype(np.float32) / 255.0
+    return letterboxed
 
 
 def _run_hailo(frame_bgr: np.ndarray, config_data: dict, class_filter=None):
