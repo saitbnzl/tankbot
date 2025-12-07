@@ -297,28 +297,40 @@ def _xywh_to_xyxy(xywh, img_width, img_height):
     if xywh.size == 0:
         return np.empty((0, 4), dtype=float)
 
+    # Prefer model input shape when undoing letterbox; fallback to frame dims
+    if _MODEL_INPUT_SHAPE:
+        model_h, model_w = _MODEL_INPUT_SHAPE
+    else:
+        model_h, model_w = img_height, img_width
+
     normalized = float(np.max(np.abs(xywh))) <= 2.0
     if normalized:
-        xs = xywh[:, 0] * img_width
-        ys = xywh[:, 1] * img_height
-        ws = xywh[:, 2] * img_width
-        hs = xywh[:, 3] * img_height
+        xs = xywh[:, 0] * model_w
+        ys = xywh[:, 1] * model_h
+        ws = xywh[:, 2] * model_w
+        hs = xywh[:, 3] * model_h
     else:
-        if _MODEL_INPUT_SHAPE:
-            model_h, model_w = _MODEL_INPUT_SHAPE
-            scale_x = img_width / float(model_w if model_w else 1)
-            scale_y = img_height / float(model_h if model_h else 1)
-        else:
-            scale_x = scale_y = 1.0
-        xs = xywh[:, 0] * scale_x
-        ys = xywh[:, 1] * scale_y
-        ws = xywh[:, 2] * scale_x
-        hs = xywh[:, 3] * scale_y
+        xs = xywh[:, 0]
+        ys = xywh[:, 1]
+        ws = xywh[:, 2]
+        hs = xywh[:, 3]
 
     x1 = xs - ws / 2.0
     y1 = ys - hs / 2.0
     x2 = xs + ws / 2.0
     y2 = ys + hs / 2.0
+
+    # Undo letterbox padding back to original frame size
+    scale = min(model_w / float(img_width), model_h / float(img_height))
+    if scale <= 0:
+        scale = 1.0
+    pad_x = (model_w - img_width * scale) / 2.0
+    pad_y = (model_h - img_height * scale) / 2.0
+
+    x1 = (x1 - pad_x) / scale
+    x2 = (x2 - pad_x) / scale
+    y1 = (y1 - pad_y) / scale
+    y2 = (y2 - pad_y) / scale
 
     boxes = np.stack([x1, y1, x2, y2], axis=1)
     boxes[:, 0::2] = np.clip(boxes[:, 0::2], 0, img_width - 1)
