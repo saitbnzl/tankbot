@@ -17,7 +17,7 @@ from common.toolbox import default_preprocess
 from common.hailo_inference import HailoInfer
 
 # ---------- CONFIG (can be overridden via configure_model) ----------
-HEF_PATH = "resources/yolov8s.hef"
+HEF_PATH = "resources/yolov8n.hef"
 LABELS_PATH = "resources/coco_labels.txt"
 
 # Debug logging flag - set to False to reduce log verbosity during inference
