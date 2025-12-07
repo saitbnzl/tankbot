@@ -244,7 +244,6 @@ def _decode_dense_tensor(image, tensor, score_threshold, max_boxes):
 
     keep = scores >= score_threshold
     if not np.any(keep):
-        print("[PP] got 0 detections after filtering")
         return {
             "detection_boxes": [],
             "detection_classes": [],
@@ -258,7 +257,6 @@ def _decode_dense_tensor(image, tensor, score_threshold, max_boxes):
 
     boxes_xyxy = _xywh_to_xyxy(xywh, img_width, img_height)
     if boxes_xyxy.size == 0:
-        print("[PP] got 0 detections after filtering")
         return {
             "detection_boxes": [],
             "detection_classes": [],
@@ -275,7 +273,6 @@ def _decode_dense_tensor(image, tensor, score_threshold, max_boxes):
     class_ids = class_ids[valid]
 
     if boxes_xyxy.size == 0:
-        print("[PP] got 0 detections after filtering")
         return {
             "detection_boxes": [],
             "detection_classes": [],
@@ -289,8 +286,6 @@ def _decode_dense_tensor(image, tensor, score_threshold, max_boxes):
     boxes_xyxy = boxes_xyxy[order]
     scores = scores[order]
     class_ids = class_ids[order]
-
-    print(f"[PP] got {len(scores)} raw detections (dense tensor)")
 
     return {
         "detection_boxes": boxes_xyxy.tolist(),
@@ -415,11 +410,6 @@ def _extract_from_class_lists(image, detections, score_threshold, max_boxes):
         scores, class_ids, boxes = zip(*top_detections)
     else:
         scores, class_ids, boxes = [], [], []
-
-    if all_detections:
-        print(f"[PP] got {len(all_detections)} raw detections")
-    else:
-        print("[PP] got 0 detections after filtering")
 
     return {
         "detection_boxes": list(boxes),
@@ -553,20 +543,14 @@ def _maybe_dump_structure(detections):
     _STRUCTURE_DUMPED = True
     try:
         arr = np.asarray(detections)
-        desc = (
-            f"[PP][INSPECT] raw type={type(detections).__name__}, "
-            f"array_shape={arr.shape}, dtype={arr.dtype}"
-        )
+
         if arr.size > 0 and np.issubdtype(arr.dtype, np.number):
             desc += f", min={float(arr.min()):.4f}, max={float(arr.max()):.4f}"
-        print(desc, flush=True)
         if arr.size > 0:
             first = arr.flatten()[0]
-            print(f"[PP][INSPECT] first value sample={first}", flush=True)
         return
     except Exception:
         pass
-    print(f"[PP][INSPECT] raw detections type={type(detections).__name__}", flush=True)
 
 
 def _parse_detection_dict(det, fallback_class, img_height, img_width):

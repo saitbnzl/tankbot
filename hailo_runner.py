@@ -4,6 +4,7 @@ import threading
 import traceback
 import numpy as np
 import cv2
+import time
 
 import hailo
 from hailo_platform import (
@@ -141,11 +142,14 @@ def _run_hailo(frame_bgr: np.ndarray, config_data: dict, class_filter=None):
     Main entry point for Hailo inference.
     Returns a list of detection dicts (used by Detector).
     """
+    t_start = time.time()
     _init_hailo()
     if _hailo_infer is None:
         raise RuntimeError("Hailo not initialized")
 
+    t_prep0 = time.time()
     inp = _preprocess(frame_bgr)
+    t_prep1 = time.time()
     result_holder = {}
     done_event = threading.Event()
 
@@ -169,6 +173,7 @@ def _run_hailo(frame_bgr: np.ndarray, config_data: dict, class_filter=None):
     with _infer_lock:
         _hailo_infer.run([inp], cb)
     done_event.wait(5.0)
+    t_infer_done = time.time()
 
     if "error" in result_holder:
         raise RuntimeError(result_holder["error"])
@@ -179,6 +184,18 @@ def _run_hailo(frame_bgr: np.ndarray, config_data: dict, class_filter=None):
     _log_raw_output_structure(results)
     raw_output = _select_primary_output(results)
     detections = _postprocess(raw_output, frame_bgr, config_data, class_filter)
+    t_end = time.time()
+
+    # Quick timing log (preprocess + infer wait + postprocess)
+    prep_ms = (t_prep1 - t_prep0) * 1000.0
+    infer_ms = (t_infer_done - t_prep1) * 1000.0
+    post_ms = (t_end - t_infer_done) * 1000.0
+    total_ms = (t_end - t_start) * 1000.0
+    print(
+        f"[HAILO][PERF] preprocess={prep_ms:.1f}ms infer_wait={infer_ms:.1f}ms "
+        f"post={post_ms:.1f}ms total={total_ms:.1f}ms",
+        flush=True,
+    )
     return detections
 
 

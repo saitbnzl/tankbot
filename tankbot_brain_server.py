@@ -28,6 +28,8 @@ _latest_frame_lock = threading.Lock()
 # FPS tracking for annotated video stream (measured at frame capture)
 _fps_last_frame_time = None
 _fps_smoothed = None
+_frame_interval_ms = None
+_frame_counter = 0
 
 # NEW: toggle between CPU YOLO and Hailo
 USE_HAILO = True  # set False to go back to plain Ultralytics on CPU
@@ -103,7 +105,7 @@ def frame_grabber():
         ok, frame = cap.read()
         if ok and frame is not None:
             # FPS measurement: only count real frames pulled from camera
-            global _fps_last_frame_time, _fps_smoothed
+            global _fps_last_frame_time, _fps_smoothed, _frame_interval_ms, _frame_counter
             now = time.time()
             if _fps_last_frame_time is not None:
                 dt = now - _fps_last_frame_time
@@ -113,7 +115,9 @@ def frame_grabber():
                         _fps_smoothed = inst_fps
                     else:
                         _fps_smoothed = 0.2 * inst_fps + 0.8 * _fps_smoothed
+                    _frame_interval_ms = dt * 1000.0
             _fps_last_frame_time = now
+            _frame_counter += 1
 
             # Rotate if your ESP32-CAM orientation requires it
             frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
@@ -168,6 +172,7 @@ def annotate_frame(frame):
     # İstersen IMG_SIZE config'ten gelebilir; şimdilik sabit varsayalım:
     IMG_SIZE = 320
 
+    detect_start = time.time()
     try:
         detections = model(frame, imgsz=IMG_SIZE, verbose=False)
     except TimeoutError as e:
@@ -180,6 +185,7 @@ def annotate_frame(frame):
         traceback.print_exc()
         # Return unannotated frame on error
         return frame
+    detect_ms = (time.time() - detect_start) * 1000.0
 
     annotated = frame.copy()
     for det in detections:
@@ -207,6 +213,15 @@ def annotate_frame(frame):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
         cv2.putText(annotated, fps_txt, (8, 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+
+    # Periodic perf log: capture vs detection latency
+    if _frame_counter and _frame_counter % 30 == 0:
+        cap_dt = f"{_frame_interval_ms:.1f}ms" if _frame_interval_ms is not None else "n/a"
+        fps_val = f"{_fps_smoothed:.1f}" if _fps_smoothed is not None else "n/a"
+        print(
+            f"[PERF] capture_dt={cap_dt} capture_fps={fps_val} detect_dt={detect_ms:.1f}ms",
+            flush=True,
+        )
 
     return annotated
 
