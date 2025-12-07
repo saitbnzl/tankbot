@@ -55,7 +55,7 @@ FRAME_RECONNECT_DELAY = 1.0
 
 if USE_HAILO:
     model = Detector(
-        hef_path="resources/yolov8s.hef",
+        hef_path="resources/yolov8n.hef",
         labels_path="resources/coco_labels.txt",
         config_data=config_data,
         # class_filter=[0],
@@ -99,7 +99,7 @@ def frame_grabber():
         ok, frame = cap.read()
         if ok and frame is not None:
             # Rotate if your ESP32-CAM orientation requires it
-            #frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
             update_latest_frame(frame)
         else:
             print("[FRAME][WARN] Frame grab failed, forcing reconnect", flush=True)
