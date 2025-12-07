@@ -46,13 +46,13 @@ def draw_detection(image: np.ndarray, box: list, labels: list, score: float, col
 
     Args:
         image (np.ndarray): Image to draw on.
-        box (list): Bounding box coordinates.
+        box (list): Bounding box coordinates [x_min, y_min, x_max, y_max].
         labels (list): List of labels (1 or 2 elements).
         score (float): Detection score.
         color (tuple): Color for the bounding box.
         track (bool): Whether to include tracking info.
     """
-    ymin, xmin, ymax, xmax = map(int, box)
+    xmin, ymin, xmax, ymax = map(int, box)
     cv2.rectangle(image, (xmin, ymin), (xmax, ymax), color, 2)
     font = cv2.FONT_HERSHEY_SIMPLEX
 
@@ -84,7 +84,8 @@ def draw_detection(image: np.ndarray, box: list, labels: list, score: float, col
 
 def denormalize_and_rm_pad(box: list, size: int, padding_length: int, input_height: int, input_width: int) -> list:
     """
-    Denormalize bounding box coordinates and remove padding.
+    Denormalize bounding box coordinates [x_min, y_min, x_max, y_max]
+    and remove letterbox padding.
 
     Args:
         box (list): Normalized bounding box coordinates.
@@ -94,16 +95,22 @@ def denormalize_and_rm_pad(box: list, size: int, padding_length: int, input_heig
         input_width (int): Width of the input image.
 
     Returns:
-        list: Denormalized bounding box coordinates with padding removed.
+        list: Denormalized bounding box coordinates with padding removed
+              in [x_min, y_min, x_max, y_max] order.
     """
-    for i, x in enumerate(box):
-        box[i] = int(x * size)
-        if (input_width != size) and (i % 2 != 0):
-            box[i] -= padding_length
-        if (input_height != size) and (i % 2 == 0):
-            box[i] -= padding_length
+    scaled = [int(v * size) for v in box]
 
-    return box
+    if input_width != size:
+        # Horizontal padding was added, so remove it from x coordinates (0, 2)
+        for idx in (0, 2):
+            scaled[idx] -= padding_length
+
+    if input_height != size:
+        # Vertical padding was added, so remove it from y coordinates (1, 3)
+        for idx in (1, 3):
+            scaled[idx] -= padding_length
+
+    return scaled
 
 
 def _to_flat_float_vector(det):
@@ -387,8 +394,12 @@ def _extract_from_class_lists(image, detections, score_threshold, max_boxes):
                 if score < score_threshold:
                     continue
 
+                # Per-class outputs usually follow TensorFlow order: [ymin, xmin, ymax, xmax]
+                # Convert to standard [xmin, ymin, xmax, ymax] before de-padding.
+                bbox_xy = [bbox[1], bbox[0], bbox[3], bbox[2]]
+
                 denorm_bbox = denormalize_and_rm_pad(
-                    list(bbox),
+                    bbox_xy,
                     size,
                     padding_length,
                     img_height,
@@ -435,7 +446,7 @@ def draw_detections(detections: dict, img_out: np.ndarray, labels, tracker=None)
     """
 
     #extract detection data from the dictionary
-    boxes = detections["detection_boxes"]  # List of [xmin,ymin,xmaxm, ymax] boxes
+    boxes = detections["detection_boxes"]  # List of [x_min, y_min, x_max, y_max] boxes
     scores = detections["detection_scores"]  # List of detection confidences
     num_detections = detections["num_detections"]  # Total number of valid detections
     classes = detections["detection_classes"]  # List of class indices per detection
@@ -445,7 +456,7 @@ def draw_detections(detections: dict, img_out: np.ndarray, labels, tracker=None)
 
         #Convert detection format to [xmin,ymin,xmaxm ymax,score] for tracker
         for idx in range(num_detections):
-            box = boxes[idx]  #[x, y, w, h]
+            box = boxes[idx]  # [x_min, y_min, x_max, y_max]
             score = scores[idx]
             dets_for_tracker.append([*box, score])
 
