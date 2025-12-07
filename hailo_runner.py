@@ -42,7 +42,8 @@ _network_group = None
 _network_group_params = None
 
 _input_vstream_info = None
-_output_vstream_info = None
+_output_vstream_infos = []
+_output_vstream_names = []
 _input_vstreams_params = None
 _output_vstreams_params = None
 _raw_output_logged = False
@@ -78,7 +79,7 @@ def _load_labels(path: str):
 
 def _init_hailo():
     global _hailo_inited, _vdevice, _network_group, _network_group_params
-    global _input_vstream_info, _output_vstream_info
+    global _input_vstream_info, _output_vstream_infos, _output_vstream_names
     global _input_vstreams_params, _output_vstreams_params
     global _input_shape, _labels
 
@@ -113,11 +114,29 @@ def _init_hailo():
             
             # 4) Stream infos
             print("[HAILO] Getting stream infos...", flush=True)
-            _input_vstream_info = hef.get_input_vstream_infos()[0]
-            _output_vstream_info = hef.get_output_vstream_infos()[0]
+            input_infos = hef.get_input_vstream_infos()
+            if not input_infos:
+                raise RuntimeError("HEF has no input vstreams")
+            _input_vstream_info = input_infos[0]
             _input_shape = _input_vstream_info.shape  # (H, W, C)
             set_model_input_shape(_input_shape)
             print(f"[HAILO] Input shape: {_input_shape}", flush=True)
+
+            _output_vstream_infos = hef.get_output_vstream_infos()
+            if not _output_vstream_infos:
+                raise RuntimeError("HEF has no output vstreams")
+            _output_vstream_names = [info.name for info in _output_vstream_infos]
+            for info in _output_vstream_infos:
+                try:
+                    fmt_type = getattr(info.format, "type", None)
+                    fmt_order = getattr(info.format, "order", None)
+                    print(
+                        f"[HAILO] Output stream '{info.name}': shape={info.shape}, "
+                        f"format={fmt_type}/{fmt_order}",
+                        flush=True,
+                    )
+                except Exception:
+                    print(f"[HAILO] Output stream '{info.name}': shape={info.shape}", flush=True)
             
             # 5) Create vstream params (dicts keyed by stream name)
             print("[HAILO] Creating vstream params...", flush=True)
@@ -196,7 +215,8 @@ def _run_hailo(frame_bgr: np.ndarray, config_data: dict, class_filter=None):
                 if DEBUG_INFERENCE:
                     print("[HAILO] Inference completed", flush=True)
 
-        raw_output = results[_output_vstream_info.name]
+        _log_raw_output_structure(results)
+        raw_output = _select_primary_output(results)
 
         if DEBUG_INFERENCE:
             print("[HAILO] Post-processing results...", flush=True)
@@ -220,7 +240,6 @@ def _postprocess(raw_outputs, frame_bgr: np.ndarray, config_data: dict, class_fi
           "bbox": [x1, y1, x2, y2],
         }
     """
-    _log_raw_output_structure(raw_outputs)
     dets = extract_detections(frame_bgr, raw_outputs, config_data)
 
     boxes = dets["detection_boxes"]
@@ -254,19 +273,38 @@ def _log_raw_output_structure(raw_outputs):
         return
     _raw_output_logged = True
     try:
-        arr = np.asarray(raw_outputs)
-        desc = (
-            f"[HAILO][INSPECT] raw output type={type(raw_outputs).__name__}, "
-            f"shape={arr.shape}, dtype={arr.dtype}"
-        )
-        if arr.size:
-            desc += f", min={float(arr.min()):.4f}, max={float(arr.max()):.4f}"
-        print(desc, flush=True)
-        if arr.size:
-            sample = arr.flatten()[: min(10, arr.size)]
-            print(f"[HAILO][INSPECT] sample={sample}", flush=True)
+        if isinstance(raw_outputs, dict):
+            for name, value in raw_outputs.items():
+                _print_array_info(f"[HAILO][INSPECT] output[{name}]", value)
+        else:
+            _print_array_info("[HAILO][INSPECT] raw output", raw_outputs)
     except Exception as exc:
         preview = str(raw_outputs)
         if len(preview) > 200:
             preview = preview[:200] + "..."
         print(f"[HAILO][INSPECT] raw output uninspectable ({exc}): {preview}", flush=True)
+
+
+def _print_array_info(label, value):
+    arr = np.asarray(value)
+    desc = f"{label} type={type(value).__name__}, shape={arr.shape}, dtype={arr.dtype}"
+    if arr.size:
+        desc += f", min={float(arr.min()):.4f}, max={float(arr.max()):.4f}"
+    print(desc, flush=True)
+    if arr.size:
+        sample = arr.flatten()[: min(10, arr.size)]
+        print(f"{label} sample={sample}", flush=True)
+
+
+def _select_primary_output(results):
+    if not isinstance(results, dict):
+        return results
+    # Prefer configured output names
+    if _output_vstream_names:
+        for name in _output_vstream_names:
+            if name in results:
+                return results[name]
+    # Fallback to first entry
+    for value in results.values():
+        return value
+    raise RuntimeError("Infer results dictionary is empty")
