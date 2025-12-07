@@ -78,5 +78,5 @@ ensure_port_free() {
 terminate_uvicorn_processes
 ensure_port_free "$PORT" || true
 
-source setup.sh
+source venv/bin/activate
 uvicorn tankbot_brain_server:app --host "$HOST" --port "$PORT"
