@@ -143,11 +143,11 @@ def _init_hailo():
             _input_vstreams_params = InputVStreamParams.make_from_network_group(
             _network_group,
             quantized=False,
-            format_type=FormatType.FLOAT32,
+            format_type=FormatType.UINT8,
             )
             _output_vstreams_params = OutputVStreamParams.make_from_network_group(
             _network_group,
-            quantized=False,   # or True / UINT8 depending on your HEF
+            quantized=False,
             format_type=FormatType.FLOAT32,
             )
             
@@ -179,7 +179,7 @@ def _preprocess(frame_bgr: np.ndarray) -> np.ndarray:
     model_h, model_w, _ = _input_shape
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
     letterboxed = default_preprocess(rgb, model_w, model_h)
-    letterboxed = letterboxed.astype(np.float32) / 255.0
+    # Hailo HEFs expect uint8 tensors; keep dtype consistent with training export
     return letterboxed
 
 
