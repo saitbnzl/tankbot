@@ -25,6 +25,10 @@ person_follow_stop_event: threading.Event | None = None
 _latest_frame = None
 _latest_frame_lock = threading.Lock()
 
+# FPS tracking for annotated video stream
+_fps_last_time = None
+_fps_smoothed = None
+
 # NEW: toggle between CPU YOLO and Hailo
 USE_HAILO = True  # set False to go back to plain Ultralytics on CPU
 
@@ -164,6 +168,20 @@ def annotate_frame(frame):
         # Return unannotated frame on error
         return frame
 
+    global _fps_last_time, _fps_smoothed
+
+    now = time.time()
+    if _fps_last_time is not None:
+        dt = now - _fps_last_time
+        if dt > 0:
+            inst_fps = 1.0 / dt
+            if _fps_smoothed is None:
+                _fps_smoothed = inst_fps
+            else:
+                # Light smoothing so text doesn't jitter too much
+                _fps_smoothed = 0.2 * inst_fps + 0.8 * _fps_smoothed
+    _fps_last_time = now
+
     annotated = frame.copy()
     for det in detections:
         cid = int(det["class_id"])
@@ -182,6 +200,14 @@ def annotate_frame(frame):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
         cv2.putText(annotated, txt, (x1, max(0, y1 - 5)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+
+    # Overlay FPS in top-left
+    if _fps_smoothed is not None:
+        fps_txt = f"FPS: {_fps_smoothed:.1f}"
+        cv2.putText(annotated, fps_txt, (8, 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
+        cv2.putText(annotated, fps_txt, (8, 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
 
     return annotated
 
