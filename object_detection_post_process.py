@@ -374,13 +374,24 @@ def _extract_from_class_lists(image, detections, score_threshold, max_boxes):
                 if score < score_threshold:
                     continue
 
-                denorm_bbox = denormalize_and_rm_pad(
-                    list(bbox),
-                    size,
-                    padding_length,
-                    img_height,
-                    img_width,
-                )
+                bbox_list = list(bbox)
+                normalized = max(abs(v) for v in bbox_list) <= 1.5
+                if normalized:
+                    denorm_bbox = denormalize_and_rm_pad(
+                        bbox_list,
+                        size,
+                        padding_length,
+                        img_height,
+                        img_width,
+                    )
+                else:
+                    x1, y1, x2, y2 = bbox_list[:4]
+                    denorm_bbox = [
+                        int(np.clip(x1, 0, img_width - 1)),
+                        int(np.clip(y1, 0, img_height - 1)),
+                        int(np.clip(x2, 0, img_width - 1)),
+                        int(np.clip(y2, 0, img_height - 1)),
+                    ]
 
             all_detections.append((score, cid, denorm_bbox))
 
