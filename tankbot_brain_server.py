@@ -25,8 +25,8 @@ person_follow_stop_event: threading.Event | None = None
 _latest_frame = None
 _latest_frame_lock = threading.Lock()
 
-# FPS tracking for annotated video stream
-_fps_last_time = None
+# FPS tracking for annotated video stream (measured at frame capture)
+_fps_last_frame_time = None
 _fps_smoothed = None
 
 # NEW: toggle between CPU YOLO and Hailo
@@ -102,6 +102,19 @@ def frame_grabber():
             print("[FRAME] Stream opened", flush=True)
         ok, frame = cap.read()
         if ok and frame is not None:
+            # FPS measurement: only count real frames pulled from camera
+            global _fps_last_frame_time, _fps_smoothed
+            now = time.time()
+            if _fps_last_frame_time is not None:
+                dt = now - _fps_last_frame_time
+                if dt > 0:
+                    inst_fps = 1.0 / dt
+                    if _fps_smoothed is None:
+                        _fps_smoothed = inst_fps
+                    else:
+                        _fps_smoothed = 0.2 * inst_fps + 0.8 * _fps_smoothed
+            _fps_last_frame_time = now
+
             # Rotate if your ESP32-CAM orientation requires it
             frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
             update_latest_frame(frame)
@@ -167,20 +180,6 @@ def annotate_frame(frame):
         traceback.print_exc()
         # Return unannotated frame on error
         return frame
-
-    global _fps_last_time, _fps_smoothed
-
-    now = time.time()
-    if _fps_last_time is not None:
-        dt = now - _fps_last_time
-        if dt > 0:
-            inst_fps = 1.0 / dt
-            if _fps_smoothed is None:
-                _fps_smoothed = inst_fps
-            else:
-                # Light smoothing so text doesn't jitter too much
-                _fps_smoothed = 0.2 * inst_fps + 0.8 * _fps_smoothed
-    _fps_last_time = now
 
     annotated = frame.copy()
     for det in detections:
