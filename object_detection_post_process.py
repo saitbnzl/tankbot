@@ -305,20 +305,41 @@ def _xywh_to_xyxy(xywh, img_width, img_height):
 
     normalized = float(np.max(np.abs(xywh))) <= 2.0
     if normalized:
-        xs = xywh[:, 0] * model_w
-        ys = xywh[:, 1] * model_h
-        ws = xywh[:, 2] * model_w
-        hs = xywh[:, 3] * model_h
+        arr = xywh * np.array([model_w, model_h, model_w, model_h], dtype=float)
     else:
-        xs = xywh[:, 0]
-        ys = xywh[:, 1]
-        ws = xywh[:, 2]
-        hs = xywh[:, 3]
+        arr = xywh.astype(float)
 
-    x1 = xs - ws / 2.0
-    y1 = ys - hs / 2.0
-    x2 = xs + ws / 2.0
-    y2 = ys + hs / 2.0
+    # Hypothesis A: xywh is center-based
+    xs_a = arr[:, 0]
+    ys_a = arr[:, 1]
+    ws_a = arr[:, 2]
+    hs_a = arr[:, 3]
+    x1_a = xs_a - ws_a / 2.0
+    y1_a = ys_a - hs_a / 2.0
+    x2_a = xs_a + ws_a / 2.0
+    y2_a = ys_a + hs_a / 2.0
+    boxes_a = np.stack([x1_a, y1_a, x2_a, y2_a], axis=1)
+
+    # Hypothesis B: xywh is top-left with width/height
+    x1_b = arr[:, 0]
+    y1_b = arr[:, 1]
+    x2_b = arr[:, 0] + arr[:, 2]
+    y2_b = arr[:, 1] + arr[:, 3]
+    boxes_b = np.stack([x1_b, y1_b, x2_b, y2_b], axis=1)
+
+    def _score_boxes(boxes):
+        widths = boxes[:, 2] - boxes[:, 0]
+        heights = boxes[:, 3] - boxes[:, 1]
+        valid = (widths > 1) & (heights > 1)
+        valid &= boxes[:, 0] >= -10
+        valid &= boxes[:, 1] >= -10
+        valid &= boxes[:, 2] <= model_w + 10
+        valid &= boxes[:, 3] <= model_h + 10
+        return np.count_nonzero(valid)
+
+    score_a = _score_boxes(boxes_a)
+    score_b = _score_boxes(boxes_b)
+    boxes = boxes_a if score_a >= score_b else boxes_b
 
     # Undo letterbox padding back to original frame size
     scale = min(model_w / float(img_width), model_h / float(img_height))
@@ -332,7 +353,11 @@ def _xywh_to_xyxy(xywh, img_width, img_height):
     y1 = (y1 - pad_y) / scale
     y2 = (y2 - pad_y) / scale
 
-    boxes = np.stack([x1, y1, x2, y2], axis=1)
+    boxes[:, 0] = (boxes[:, 0] - pad_x) / scale
+    boxes[:, 2] = (boxes[:, 2] - pad_x) / scale
+    boxes[:, 1] = (boxes[:, 1] - pad_y) / scale
+    boxes[:, 3] = (boxes[:, 3] - pad_y) / scale
+
     boxes[:, 0::2] = np.clip(boxes[:, 0::2], 0, img_width - 1)
     boxes[:, 1::2] = np.clip(boxes[:, 1::2], 0, img_height - 1)
     return boxes
