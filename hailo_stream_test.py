@@ -23,7 +23,7 @@ from object_detection_post_process import inference_result_handler
 
 
 DEFAULT_STREAM_URL = "http://192.168.1.50:81/stream"
-DEFAULT_HEF = "resources/yolov8s.hef"
+DEFAULT_HEF = "resources/yolov11s.hef"
 DEFAULT_LABELS = "resources/coco_labels.txt"
 DEFAULT_CONFIG = "resources/yolo_conf.json"
 DEFAULT_OUTPUT_DIR = ".output"

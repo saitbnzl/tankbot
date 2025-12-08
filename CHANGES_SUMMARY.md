@@ -209,7 +209,7 @@ python tankbot_brain_server.py
 ### Adjust Timeout
 ```python
 model = Detector(
-    hef_path="resources/yolov8s.hef",
+    hef_path="resources/yolov11s.hef",
     use_hailo=True,
     timeout=30.0,  # Increase if needed
 )
