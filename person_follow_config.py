@@ -4,7 +4,7 @@
 # --------------------------------------------------
 
 config = {
-    "CONF_THRESHOLD": 0.50,     # YOLO person confidence
+    "CONF_THRESHOLD": 0.30,     # YOLO person confidence
     "IMG_SIZE": 320,            # YOLO image size (higher = better accuracy, slower)
     "CENTER_DEADZONE": 0.21,    # ±15% horizontally is “centered”
     "TURN_SPEED": 25,           # rotation speed (0-100)
