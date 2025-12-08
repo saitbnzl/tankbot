@@ -17,7 +17,7 @@ config = {
     "STOP_ON_TOO_CLOSE": True,  # enable stop when too close
 }
 
-# easy accessor
+# easy accessorƒ
 def get_config():
     return config
 

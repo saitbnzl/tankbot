@@ -186,16 +186,17 @@ def _run_hailo(frame_bgr: np.ndarray, config_data: dict, class_filter=None):
     detections = _postprocess(raw_output, frame_bgr, config_data, class_filter)
     t_end = time.time()
 
-    # Quick timing log (preprocess + infer wait + postprocess)
-    prep_ms = (t_prep1 - t_prep0) * 1000.0
-    infer_ms = (t_infer_done - t_prep1) * 1000.0
-    post_ms = (t_end - t_infer_done) * 1000.0
-    total_ms = (t_end - t_start) * 1000.0
-    print(
-        f"[HAILO][PERF] preprocess={prep_ms:.1f}ms infer_wait={infer_ms:.1f}ms "
-        f"post={post_ms:.1f}ms total={total_ms:.1f}ms",
-        flush=True,
-    )
+    if DEBUG_INFERENCE:
+        # Quick timing log (preprocess + infer wait + postprocess)
+        prep_ms = (t_prep1 - t_prep0) * 1000.0
+        infer_ms = (t_infer_done - t_prep1) * 1000.0
+        post_ms = (t_end - t_infer_done) * 1000.0
+        total_ms = (t_end - t_start) * 1000.0
+        print(
+            f"[HAILO][PERF] preprocess={prep_ms:.1f}ms infer_wait={infer_ms:.1f}ms "
+            f"post={post_ms:.1f}ms total={total_ms:.1f}ms",
+            flush=True,
+        )
     return detections
 
 
